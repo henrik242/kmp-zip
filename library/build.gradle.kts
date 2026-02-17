@@ -88,7 +88,9 @@ listOf("iosX64Test", "iosArm64Test", "iosSimulatorArm64Test").forEach { name ->
 
 mavenPublishing {
     publishToMavenCentral(automaticRelease = true)
-    signAllPublications()
+    if (providers.environmentVariable("CI").isPresent) {
+        signAllPublications()
+    }
 
     pom {
         name.set("kmp-libs")
