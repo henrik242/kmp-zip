@@ -26,20 +26,14 @@ On JVM, the implementations delegate to `java.io` and `java.util.zip`. On iOS/Na
 
 ## Installation
 
-### GitHub Packages
+Published artifacts are available at https://henrik242.github.io/kmp-libs.
 
 Add the repository and dependency to your Gradle build:
 
 ```kotlin
 // settings.gradle.kts (or root build.gradle.kts)
 repositories {
-    maven {
-        url = uri("https://maven.pkg.github.com/henrik242/kmp-libs")
-        credentials {
-            username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
-            password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
-        }
-    }
+    maven("https://henrik242.github.io/kmp-libs")
 }
 ```
 

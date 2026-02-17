@@ -89,12 +89,8 @@ listOf("iosX64Test", "iosArm64Test", "iosSimulatorArm64Test").forEach { name ->
 publishing {
     repositories {
         maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/${System.getenv("GITHUB_REPOSITORY") ?: "synth/kmp-libs"}")
-            credentials {
-                username = System.getenv("GITHUB_ACTOR") ?: ""
-                password = System.getenv("GITHUB_TOKEN") ?: ""
-            }
+            name = "pages"
+            url = uri(layout.buildDirectory.dir("maven-repo"))
         }
     }
 }
