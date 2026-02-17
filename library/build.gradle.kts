@@ -1,6 +1,6 @@
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
-    `maven-publish`
+    alias(libs.plugins.maven.publish)
 }
 
 group = "no.synth.kmplibs"
@@ -86,11 +86,30 @@ listOf("iosX64Test", "iosArm64Test", "iosSimulatorArm64Test").forEach { name ->
     }
 }
 
-publishing {
-    repositories {
-        maven {
-            name = "pages"
-            url = uri(layout.buildDirectory.dir("maven-repo"))
+mavenPublishing {
+    publishToMavenCentral(automaticRelease = true)
+    signAllPublications()
+
+    pom {
+        name.set("kmp-libs")
+        description.set("Kotlin Multiplatform ByteArrayInputStream and ZipInputStream for JVM and iOS")
+        url.set("https://github.com/henrik242/kmp-libs")
+        licenses {
+            license {
+                name.set("MIT")
+                url.set("https://opensource.org/licenses/MIT")
+            }
+        }
+        developers {
+            developer {
+                id.set("henrik242")
+                url.set("https://github.com/henrik242")
+            }
+        }
+        scm {
+            url.set("https://github.com/henrik242/kmp-libs")
+            connection.set("scm:git:git://github.com/henrik242/kmp-libs.git")
+            developerConnection.set("scm:git:ssh://git@github.com/henrik242/kmp-libs.git")
         }
     }
 }

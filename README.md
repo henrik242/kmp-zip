@@ -26,16 +26,7 @@ On JVM, the implementations delegate to `java.io` and `java.util.zip`. On iOS/Na
 
 ## Installation
 
-Published artifacts are available at https://henrik242.github.io/kmp-libs.
-
-Add the repository and dependency to your Gradle build:
-
-```kotlin
-// settings.gradle.kts (or root build.gradle.kts)
-repositories {
-    maven("https://henrik242.github.io/kmp-libs")
-}
-```
+Published on [Maven Central](https://central.sonatype.com/artifact/no.synth.kmplibs/library). No special repository configuration needed.
 
 ```kotlin
 // build.gradle.kts
@@ -58,20 +49,11 @@ kotlin {
 }
 ```
 
-### Maven Local
-
-```sh
-# In this repo:
-./gradlew :library:publishToMavenLocal
-
-# In your consuming project, add mavenLocal():
-# repositories { mavenLocal() }
-```
-
 ## Usage
 
 ```kotlin
 import no.synth.kmplibs.io.ByteArrayInputStream
+import no.synth.kmplibs.io.readBytes
 import no.synth.kmplibs.zip.ZipInputStream
 import no.synth.kmplibs.zip.ZipConstants
 
@@ -80,23 +62,13 @@ val stream = ByteArrayInputStream(byteArrayOf(1, 2, 3))
 val b = stream.read() // 1
 
 // Read a ZIP from a ByteArray
-val zis = ZipInputStream(zipBytes)
-while (true) {
-    val entry = zis.getNextEntry() ?: break
-    println("${entry.name} (${if (entry.method == ZipConstants.DEFLATED) "deflated" else "stored"})")
-
-    val buf = ByteArray(4096)
-    val content = buildList {
-        while (true) {
-            val n = zis.read(buf, 0, buf.size)
-            if (n == -1) break
-            addAll(buf.take(n))
-        }
-    }.toByteArray()
-
-    println(content.decodeToString())
+ZipInputStream(zipBytes).use { zis ->
+    while (true) {
+        val entry = zis.nextEntry ?: break
+        println("${entry.name} (${if (entry.method == ZipConstants.DEFLATED) "deflated" else "stored"})")
+        println(zis.readBytes().decodeToString())
+    }
 }
-zis.close()
 ```
 
 ## Building
@@ -111,9 +83,9 @@ Requires JDK 21 and Xcode (for iOS targets).
 
 ## Publishing
 
-Tagging a release triggers the GitHub Actions publish workflow:
+Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
