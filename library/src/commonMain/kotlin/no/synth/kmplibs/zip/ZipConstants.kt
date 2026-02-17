@@ -6,5 +6,4 @@ object ZipConstants {
 
     internal const val LOCAL_FILE_HEADER_SIGNATURE = 0x04034b50
     internal const val DATA_DESCRIPTOR_SIGNATURE = 0x08074b50
-    internal const val CENTRAL_DIR_SIGNATURE = 0x02014b50
 }

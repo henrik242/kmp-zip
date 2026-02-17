@@ -1,5 +1,6 @@
 package no.synth.kmplibs.zip
 
+import no.synth.kmplibs.io.readBytes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -185,6 +186,85 @@ class ZipInputStreamTest {
         assertEquals(0, zis.available())
 
         zis.close()
+    }
+
+    // -- nextEntry property --
+
+    @Test
+    fun nextEntryProperty() {
+        val zis = ZipInputStream(TestData.multiEntryZip)
+
+        val entry1 = zis.nextEntry
+        assertNotNull(entry1)
+        assertEquals("file1.txt", entry1.name)
+        readEntryContent(zis)
+
+        val entry2 = zis.nextEntry
+        assertNotNull(entry2)
+        assertEquals("file2.txt", entry2.name)
+        readEntryContent(zis)
+
+        assertNull(zis.nextEntry)
+        zis.close()
+    }
+
+    // -- readBytes() extension --
+
+    @Test
+    fun readBytesOnEntry() {
+        val zis = ZipInputStream(TestData.deflatedZip)
+        val entry = zis.getNextEntry()
+        assertNotNull(entry)
+
+        val content = zis.readBytes()
+        assertEquals("Hello, World!", content.decodeToString())
+
+        assertNull(zis.getNextEntry())
+        zis.close()
+    }
+
+    @Test
+    fun readBytesOnBinaryEntry() {
+        val zis = ZipInputStream(TestData.binaryZip)
+        val entry = zis.getNextEntry()
+        assertNotNull(entry)
+
+        val data = zis.readBytes()
+        assertEquals(256, data.size)
+        for (i in 0 until 256) {
+            assertEquals(i.toByte(), data[i], "Byte at index $i mismatch")
+        }
+
+        zis.close()
+    }
+
+    // -- use {} extension --
+
+    @Test
+    fun useClosesStream() {
+        val result = ZipInputStream(TestData.deflatedZip).use { zis ->
+            val entry = zis.getNextEntry()
+            assertNotNull(entry)
+            readEntryContent(zis)
+        }
+        assertEquals("Hello, World!", result)
+    }
+
+    @Test
+    fun useWithNextEntryAndReadBytes() {
+        val entries = ZipInputStream(TestData.multiEntryZip).use { zis ->
+            val result = mutableListOf<Pair<String, String>>()
+            while (true) {
+                val entry = zis.nextEntry ?: break
+                result.add(entry.name to zis.readBytes().decodeToString())
+            }
+            result
+        }
+        assertEquals(2, entries.size)
+        assertEquals("file1.txt", entries[0].first)
+        assertEquals("First file content", entries[0].second)
+        assertEquals("file2.txt", entries[1].first)
+        assertEquals("Second file content", entries[1].second)
     }
 
     // -- Tests for CLI-generated ZIPs (zip command) --

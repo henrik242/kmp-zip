@@ -1,5 +1,5 @@
 package no.synth.kmplibs.io
 
-expect interface Closeable {
-    fun close()
+expect interface Closeable : AutoCloseable {
+    override fun close()
 }

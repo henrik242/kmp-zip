@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 
 class ByteArrayInputStreamTest {
 
@@ -103,6 +104,51 @@ class ByteArrayInputStreamTest {
         assertEquals(1, buf[0])
         assertEquals(2, buf[1])
         assertEquals(-1, stream.read(buf, 0, 10))
+    }
+
+    @Test
+    fun readBytes() {
+        val data = "Hello, World!".encodeToByteArray()
+        val stream = ByteArrayInputStream(data)
+        assertEquals("Hello, World!", stream.readBytes().decodeToString())
+    }
+
+    @Test
+    fun readBytesEmpty() {
+        val stream = ByteArrayInputStream(byteArrayOf())
+        assertEquals(0, stream.readBytes().size)
+    }
+
+    @Test
+    fun readBytesAfterPartialRead() {
+        val data = byteArrayOf(1, 2, 3, 4, 5)
+        val stream = ByteArrayInputStream(data)
+        stream.read() // consume first byte
+        val rest = stream.readBytes()
+        assertEquals(4, rest.size)
+        assertEquals(2, rest[0])
+        assertEquals(5, rest[3])
+    }
+
+    @Test
+    fun useReturnsBlockValue() {
+        val result = ByteArrayInputStream(byteArrayOf(1, 2, 3)).use { stream ->
+            stream.read() + stream.read() + stream.read()
+        }
+        assertEquals(6, result)
+    }
+
+    @Test
+    fun useClosesOnException() {
+        var closed = false
+        val stream = object : InputStream() {
+            override fun read(): Int = 1
+            override fun close() { closed = true }
+        }
+        assertFailsWith<RuntimeException> {
+            stream.use { throw RuntimeException("test") }
+        }
+        assertTrue(closed)
     }
 
     @Test

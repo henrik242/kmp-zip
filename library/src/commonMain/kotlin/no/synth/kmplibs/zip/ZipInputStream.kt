@@ -11,6 +11,9 @@ expect class ZipInputStream(input: InputStream) : InputStream {
     override fun close()
 }
 
+val ZipInputStream.nextEntry: ZipEntry?
+    get() = getNextEntry()
+
 fun ZipInputStream(data: ByteArray): ZipInputStream {
     return ZipInputStream(no.synth.kmplibs.io.ByteArrayInputStream(data))
 }

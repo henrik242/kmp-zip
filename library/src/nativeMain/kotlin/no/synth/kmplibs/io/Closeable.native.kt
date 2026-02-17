@@ -1,5 +1,5 @@
 package no.synth.kmplibs.io
 
-actual interface Closeable {
-    actual fun close()
+actual interface Closeable : AutoCloseable {
+    actual override fun close()
 }

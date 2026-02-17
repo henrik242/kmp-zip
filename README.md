@@ -40,7 +40,7 @@ repositories {
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("no.synth.kmplibs:library:0.1.0")
+    implementation("no.synth.kmplibs:library:0.2.0")
 }
 ```
 
@@ -51,7 +51,7 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth.kmplibs:library:0.1.0")
+                implementation("no.synth.kmplibs:library:0.2.0")
             }
         }
     }
