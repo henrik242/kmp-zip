@@ -34,7 +34,7 @@ class ZipInputStreamTest {
     @Test
     fun singleStoredEntry() {
         val zis = ZipInputStream(TestData.storedZip)
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
         assertEquals("hello.txt", entry.name)
         assertEquals(ZipConstants.STORED, entry.method)
@@ -42,14 +42,14 @@ class ZipInputStreamTest {
         val content = readEntryContent(zis)
         assertEquals("Hello, World!", content)
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
     fun singleDeflatedEntry() {
         val zis = ZipInputStream(TestData.deflatedZip)
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
         assertEquals("hello.txt", entry.name)
         assertEquals(ZipConstants.DEFLATED, entry.method)
@@ -57,7 +57,7 @@ class ZipInputStreamTest {
         val content = readEntryContent(zis)
         assertEquals("Hello, World!", content)
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
@@ -65,26 +65,26 @@ class ZipInputStreamTest {
     fun multipleEntries() {
         val zis = ZipInputStream(TestData.multiEntryZip)
 
-        val entry1 = zis.getNextEntry()
+        val entry1 = zis.nextEntry
         assertNotNull(entry1)
         assertEquals("file1.txt", entry1.name)
         val content1 = readEntryContent(zis)
         assertEquals("First file content", content1)
 
-        val entry2 = zis.getNextEntry()
+        val entry2 = zis.nextEntry
         assertNotNull(entry2)
         assertEquals("file2.txt", entry2.name)
         val content2 = readEntryContent(zis)
         assertEquals("Second file content", content2)
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
     fun entryMetadata() {
         val zis = ZipInputStream(TestData.deflatedZip)
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
         assertEquals("hello.txt", entry.name)
         assertEquals(false, entry.isDirectory)
@@ -95,27 +95,27 @@ class ZipInputStreamTest {
     fun directoryEntries() {
         val zis = ZipInputStream(TestData.directoryZip)
 
-        val dir = zis.getNextEntry()
+        val dir = zis.nextEntry
         assertNotNull(dir)
         assertEquals("mydir/", dir.name)
         assertTrue(dir.isDirectory)
         readEntryContent(zis) // consume dir entry data
 
-        val file = zis.getNextEntry()
+        val file = zis.nextEntry
         assertNotNull(file)
         assertEquals("mydir/file.txt", file.name)
         assertEquals(false, file.isDirectory)
         val content = readEntryContent(zis)
         assertEquals("Inside directory", content)
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
     fun emptyZip() {
         val zis = ZipInputStream(TestData.emptyZip)
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
@@ -123,13 +123,13 @@ class ZipInputStreamTest {
     fun closeEntrySkipsData() {
         val zis = ZipInputStream(TestData.multiEntryZip)
 
-        val entry1 = zis.getNextEntry()
+        val entry1 = zis.nextEntry
         assertNotNull(entry1)
         assertEquals("file1.txt", entry1.name)
         // Don't read, just close entry
         zis.closeEntry()
 
-        val entry2 = zis.getNextEntry()
+        val entry2 = zis.nextEntry
         assertNotNull(entry2)
         assertEquals("file2.txt", entry2.name)
         val content = readEntryContent(zis)
@@ -141,7 +141,7 @@ class ZipInputStreamTest {
     @Test
     fun binaryContent() {
         val zis = ZipInputStream(TestData.binaryZip)
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
         assertEquals("binary.dat", entry.name)
 
@@ -151,14 +151,14 @@ class ZipInputStreamTest {
             assertEquals(i.toByte(), data[i], "Byte at index $i mismatch")
         }
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
     fun singleByteRead() {
         val zis = ZipInputStream(TestData.deflatedZip)
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
 
         // Read one byte at a time
@@ -176,7 +176,7 @@ class ZipInputStreamTest {
     fun availableReturnsCorrectValues() {
         val zis = ZipInputStream(TestData.deflatedZip)
 
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
         // During entry reading, available should be 1 (per Java spec)
         assertEquals(1, zis.available())
@@ -213,20 +213,20 @@ class ZipInputStreamTest {
     @Test
     fun readBytesOnEntry() {
         val zis = ZipInputStream(TestData.deflatedZip)
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
 
         val content = zis.readBytes()
         assertEquals("Hello, World!", content.decodeToString())
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
     fun readBytesOnBinaryEntry() {
         val zis = ZipInputStream(TestData.binaryZip)
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
 
         val data = zis.readBytes()
@@ -243,7 +243,7 @@ class ZipInputStreamTest {
     @Test
     fun useClosesStream() {
         val result = ZipInputStream(TestData.deflatedZip).use { zis ->
-            val entry = zis.getNextEntry()
+            val entry = zis.nextEntry
             assertNotNull(entry)
             readEntryContent(zis)
         }
@@ -272,12 +272,12 @@ class ZipInputStreamTest {
     @Test
     fun cliStoredZip() {
         val zis = ZipInputStream(TestData.cliStoredZip)
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
         assertEquals("hello.txt", entry.name)
         assertEquals(ZipConstants.STORED, entry.method)
         assertEquals("Hello from zip CLI\\!", readEntryContent(zis))
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
@@ -285,17 +285,17 @@ class ZipInputStreamTest {
     fun cliDeflatedMultiEntry() {
         val zis = ZipInputStream(TestData.cliDeflatedZip)
 
-        val entry1 = zis.getNextEntry()
+        val entry1 = zis.nextEntry
         assertNotNull(entry1)
         assertEquals("hello.txt", entry1.name)
         assertEquals("Hello from zip CLI\\!", readEntryContent(zis))
 
-        val entry2 = zis.getNextEntry()
+        val entry2 = zis.nextEntry
         assertNotNull(entry2)
         assertEquals("binary.txt", entry2.name)
         assertEquals("Binary test", readEntryContent(zis))
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
@@ -303,18 +303,18 @@ class ZipInputStreamTest {
     fun cliWithDirZip() {
         val zis = ZipInputStream(TestData.cliWithDirZip)
 
-        val dir = zis.getNextEntry()
+        val dir = zis.nextEntry
         assertNotNull(dir)
         assertEquals("subdir/", dir.name)
         assertTrue(dir.isDirectory)
         readEntryContent(zis)
 
-        val file = zis.getNextEntry()
+        val file = zis.nextEntry
         assertNotNull(file)
         assertEquals("subdir/nested.txt", file.name)
         assertEquals("Nested file", readEntryContent(zis))
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
@@ -322,12 +322,12 @@ class ZipInputStreamTest {
     fun cliMixedBinaryZip() {
         val zis = ZipInputStream(TestData.cliMixedZip)
 
-        val entry1 = zis.getNextEntry()
+        val entry1 = zis.nextEntry
         assertNotNull(entry1)
         assertEquals("hello.txt", entry1.name)
         assertEquals("Hello from zip CLI\\!", readEntryContent(zis))
 
-        val entry2 = zis.getNextEntry()
+        val entry2 = zis.nextEntry
         assertNotNull(entry2)
         assertEquals("raw.bin", entry2.name)
         val data = readEntryBytes(zis)
@@ -340,7 +340,7 @@ class ZipInputStreamTest {
         assertEquals(0xFE.toByte(), data[5])
         assertEquals(0xFD.toByte(), data[6])
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
@@ -349,11 +349,11 @@ class ZipInputStreamTest {
     @Test
     fun sevenStoredZip() {
         val zis = ZipInputStream(TestData.sevenStoredZip)
-        val entry = zis.getNextEntry()
+        val entry = zis.nextEntry
         assertNotNull(entry)
         assertEquals("hello.txt", entry.name)
         assertEquals("Hello from zip CLI\\!", readEntryContent(zis))
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 
@@ -361,22 +361,22 @@ class ZipInputStreamTest {
     fun sevenDeflatedMultiEntry() {
         val zis = ZipInputStream(TestData.sevenDeflatedZip)
 
-        val entry1 = zis.getNextEntry()
+        val entry1 = zis.nextEntry
         assertNotNull(entry1)
         assertEquals("binary.txt", entry1.name)
         assertEquals("Binary test", readEntryContent(zis))
 
-        val entry2 = zis.getNextEntry()
+        val entry2 = zis.nextEntry
         assertNotNull(entry2)
         assertEquals("hello.txt", entry2.name)
         assertEquals("Hello from zip CLI\\!", readEntryContent(zis))
 
-        val entry3 = zis.getNextEntry()
+        val entry3 = zis.nextEntry
         assertNotNull(entry3)
         assertEquals("subdir/nested.txt", entry3.name)
         assertEquals("Nested file", readEntryContent(zis))
 
-        assertNull(zis.getNextEntry())
+        assertNull(zis.nextEntry)
         zis.close()
     }
 }

@@ -5,10 +5,11 @@ import no.synth.kmplibs.io.InputStream
 actual class ZipInputStream actual constructor(input: InputStream) : InputStream() {
     private val jvmZis = java.util.zip.ZipInputStream(input)
 
-    actual fun getNextEntry(): ZipEntry? {
-        val entry = jvmZis.nextEntry ?: return null
-        return ZipEntry(entry)
-    }
+    actual val nextEntry: ZipEntry?
+        get() {
+            val entry = jvmZis.nextEntry ?: return null
+            return ZipEntry(entry)
+        }
 
     actual fun closeEntry() {
         jvmZis.closeEntry()

@@ -24,61 +24,62 @@ actual class ZipInputStream actual constructor(private val input: InputStream) :
     // For tracking data descriptor needs
     private var hasDataDescriptor = false
 
-    actual fun getNextEntry(): ZipEntry? {
-        if (closed) throw Exception("Stream closed")
-        closeEntry()
+    actual val nextEntry: ZipEntry?
+        get() {
+            if (closed) throw Exception("Stream closed")
+            closeEntry()
 
-        val sig = readLeInt()
-        if (sig != ZipConstants.LOCAL_FILE_HEADER_SIGNATURE) return null
+            val sig = readLeInt()
+            if (sig != ZipConstants.LOCAL_FILE_HEADER_SIGNATURE) return null
 
-        @Suppress("UNUSED_VARIABLE")
-        val versionNeeded = readLeShort()
-        val generalFlag = readLeShort()
-        val method = readLeShort()
-        val lastModTime = readLeShort()
-        val lastModDate = readLeShort()
-        val crc32 = readLeInt().toLong() and 0xFFFFFFFFL
-        val compressedSize = readLeInt().toLong() and 0xFFFFFFFFL
-        val uncompressedSize = readLeInt().toLong() and 0xFFFFFFFFL
-        val nameLen = readLeShort()
-        val extraLen = readLeShort()
+            @Suppress("UNUSED_VARIABLE")
+            val versionNeeded = readLeShort()
+            val generalFlag = readLeShort()
+            val method = readLeShort()
+            val lastModTime = readLeShort()
+            val lastModDate = readLeShort()
+            val crc32 = readLeInt().toLong() and 0xFFFFFFFFL
+            val compressedSize = readLeInt().toLong() and 0xFFFFFFFFL
+            val uncompressedSize = readLeInt().toLong() and 0xFFFFFFFFL
+            val nameLen = readLeShort()
+            val extraLen = readLeShort()
 
-        hasDataDescriptor = (generalFlag and 0x08) != 0
+            hasDataDescriptor = (generalFlag and 0x08) != 0
 
-        val nameBytes = readExact(nameLen)
-        val name = nameBytes.decodeToString()
+            val nameBytes = readExact(nameLen)
+            val name = nameBytes.decodeToString()
 
-        val extra = if (extraLen > 0) readExact(extraLen) else null
+            val extra = if (extraLen > 0) readExact(extraLen) else null
 
-        val dosTime = (lastModDate.toLong() shl 16) or lastModTime.toLong()
+            val dosTime = (lastModDate.toLong() shl 16) or lastModTime.toLong()
 
-        val entry = ZipEntry(
-            name = name,
-            size = if (hasDataDescriptor) -1L else uncompressedSize,
-            compressedSize = if (hasDataDescriptor) -1L else compressedSize,
-            crc = if (hasDataDescriptor) -1L else crc32,
-            method = method,
-            time = dosTime,
-            extra = extra,
-        )
+            val entry = ZipEntry(
+                name = name,
+                size = if (hasDataDescriptor) -1L else uncompressedSize,
+                compressedSize = if (hasDataDescriptor) -1L else compressedSize,
+                crc = if (hasDataDescriptor) -1L else crc32,
+                method = method,
+                time = dosTime,
+                extra = extra,
+            )
 
-        currentEntry = entry
-        entryEof = false
+            currentEntry = entry
+            entryEof = false
 
-        when (method) {
-            ZipConstants.STORED -> {
-                remainingBytes = if (hasDataDescriptor) Long.MAX_VALUE else compressedSize
+            when (method) {
+                ZipConstants.STORED -> {
+                    remainingBytes = if (hasDataDescriptor) Long.MAX_VALUE else compressedSize
+                }
+                ZipConstants.DEFLATED -> {
+                    inflater = Inflater().also { it.init() }
+                    inflaterBufPos = 0
+                    inflaterBufLen = 0
+                }
+                else -> throw Exception("Unsupported compression method: $method")
             }
-            ZipConstants.DEFLATED -> {
-                inflater = Inflater().also { it.init() }
-                inflaterBufPos = 0
-                inflaterBufLen = 0
-            }
-            else -> throw Exception("Unsupported compression method: $method")
+
+            return entry
         }
-
-        return entry
-    }
 
     actual fun closeEntry() {
         if (entryEof) return

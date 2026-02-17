@@ -13,15 +13,15 @@ On JVM, the implementations delegate to `java.io` and `java.util.zip`. On iOS/Na
 
 ### `no.synth.kmplibs.io`
 
-- `Closeable` — interface with `close()`
-- `InputStream` — abstract class with `read()`, `read(ByteArray)`, `read(ByteArray, off, len)`, `available()`, `skip(Long)`, `mark(Int)`, `reset()`, `markSupported()`, `close()`
+- `Closeable` — interface extending `AutoCloseable`, works with stdlib `use {}`
+- `InputStream` — abstract class with `read()`, `read(ByteArray)`, `read(ByteArray, off, len)`, `readBytes()`, `available()`, `skip(Long)`, `mark(Int)`, `reset()`, `markSupported()`, `close()`
 - `ByteArrayInputStream(ByteArray)` / `ByteArrayInputStream(ByteArray, offset, length)` — full Java-compatible API
 
 ### `no.synth.kmplibs.zip`
 
 - `ZipEntry` — properties: `name`, `size`, `compressedSize`, `crc`, `method`, `isDirectory`, `time`, `comment`, `extra`
 - `ZipConstants` — `STORED = 0`, `DEFLATED = 8`
-- `ZipInputStream(InputStream)` — `getNextEntry()`, `closeEntry()`, `read()`, `read(ByteArray, off, len)`, `available()`, `close()`
+- `ZipInputStream(InputStream)` — `nextEntry`, `closeEntry()`, `read()`, `read(ByteArray, off, len)`, `available()`, `close()`
 - `ZipInputStream(ByteArray)` — convenience function
 
 ## Installation
@@ -40,7 +40,7 @@ repositories {
 ```kotlin
 // build.gradle.kts
 dependencies {
-    implementation("no.synth.kmplibs:library:0.2.0")
+    implementation("no.synth.kmplibs:library:0.3.0")
 }
 ```
 
@@ -51,7 +51,7 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth.kmplibs:library:0.2.0")
+                implementation("no.synth.kmplibs:library:0.3.0")
             }
         }
     }

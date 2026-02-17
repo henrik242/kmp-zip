@@ -22,7 +22,7 @@ class ZipInputStreamJvmTest {
         val zis = ZipInputStream(data)
         val entries = mutableListOf<EntryData>()
         while (true) {
-            val entry = zis.getNextEntry() ?: break
+            val entry = zis.nextEntry ?: break
             val content = readAllBytes(zis)
             entries.add(EntryData(entry.name, content, entry.method, entry.isDirectory))
         }
