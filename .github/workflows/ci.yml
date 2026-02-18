@@ -21,15 +21,15 @@ jobs:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
           restore-keys: konan-${{ runner.os }}-
-      - run: ./gradlew :kmp-io:build
-      - run: ./gradlew :kmp-io:jvmTest
-      - run: ./gradlew :kmp-io:iosSimulatorArm64Test
-      - run: ./gradlew :kmp-io:publishToMavenLocal
+      - run: ./gradlew build
+      - run: ./gradlew jvmTest
+      - run: ./gradlew iosSimulatorArm64Test
+      - run: ./gradlew publishToMavenLocal
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: test-reports
-          path: library/build/reports/tests/
+          path: build/reports/tests/
       - uses: actions/upload-artifact@v4
         with:
           name: maven-artifacts
