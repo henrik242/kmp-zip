@@ -33,4 +33,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: maven-artifacts
-          path: ~/.m2/repository/no/synth/kmpio/
+          path: ~/.m2/repository/no/synth/kmp-io/
