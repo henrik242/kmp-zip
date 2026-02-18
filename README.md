@@ -76,9 +76,9 @@ ZipInputStream(zipBytes).use { zis ->
 Requires JDK 21 and Xcode (for iOS targets).
 
 ```sh
-./gradlew :library:build                      # Full build
-./gradlew :library:jvmTest                    # JVM tests
-./gradlew :library:iosSimulatorArm64Test      # iOS simulator tests
+./gradlew :kmpio:build                      # Full build
+./gradlew :kmpio:jvmTest                    # JVM tests
+./gradlew :kmpio:iosSimulatorArm64Test      # iOS simulator tests
 ```
 
 ## Publishing
