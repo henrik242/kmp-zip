@@ -29,8 +29,8 @@ jobs:
         if: always()
         with:
           name: test-reports
-          path: build/reports/tests/
+          path: "**/build/reports/tests/"
       - uses: actions/upload-artifact@v4
         with:
           name: maven-artifacts
-          path: ~/.m2/repository/no/synth/kmp-io/
+          path: ~/.m2/repository/no/synth/
