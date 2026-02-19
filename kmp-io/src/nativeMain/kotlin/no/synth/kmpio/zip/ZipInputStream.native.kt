@@ -124,9 +124,8 @@ actual class ZipInputStream actual constructor(private val input: InputStream) :
     }
 
     actual override fun read(b: ByteArray, off: Int, len: Int): Int {
-        if (entryEof || currentEntry == null) return -1
-
-        val entry = currentEntry!!
+        val entry = currentEntry
+        if (entryEof || entry == null) return -1
         return when (entry.method) {
             ZipConstants.STORED -> readStored(b, off, len)
             ZipConstants.DEFLATED -> readDeflated(b, off, len)

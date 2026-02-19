@@ -111,7 +111,7 @@ ZipOutputStream(buffer).use { zos ->
 
 // Read
 ZipInputStream(buffer).use { zis ->
-    val entry = zis.nextEntry!!
+    val entry = zis.nextEntry ?: error("Expected entry")
     println("${entry.name}: ${zis.readBytes().decodeToString()}")
 }
 ```
