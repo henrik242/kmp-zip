@@ -10,25 +10,6 @@ repositories {
 group = "no.synth"
 version = "0.7.0"
 
-kotlin {
-    jvm()
-    iosX64()
-    iosArm64()
-    iosSimulatorArm64()
-
-    compilerOptions {
-        freeCompilerArgs.add("-Xexpect-actual-classes")
-    }
-
-    sourceSets {
-        commonTest {
-            dependencies {
-                implementation(kotlin("test"))
-            }
-        }
-    }
-}
-
 // Generate TestData.native.kt from template with the absolute resource path baked in
 val generateNativeTestData by tasks.registering {
     val templateFile = layout.projectDirectory.file("src/nativeTest/kotlin/no/synth/kmpzip/zip/TestData.native.kt.template")
@@ -45,11 +26,29 @@ val generateNativeTestData by tasks.registering {
     }
 }
 
-// Add the generated source to each iOS test source set
-val generatedSrcDir = tasks.named("generateNativeTestData").map { layout.buildDirectory.dir("generated/nativeTestData/kotlin") }
-listOf("iosX64Test", "iosArm64Test", "iosSimulatorArm64Test").forEach { name ->
-    kotlin.sourceSets.getByName(name) {
-        kotlin.srcDir(generatedSrcDir)
+kotlin {
+    jvm()
+    iosX64()
+    iosArm64()
+    iosSimulatorArm64()
+
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+
+    sourceSets {
+        commonTest {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+        nativeTest {
+            kotlin.srcDir(
+                generateNativeTestData.map {
+                    layout.buildDirectory.dir("generated/nativeTestData/kotlin")
+                }
+            )
+        }
     }
 }
 
