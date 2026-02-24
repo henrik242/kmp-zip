@@ -7,9 +7,6 @@ repositories {
     mavenCentral()
 }
 
-group = "no.synth"
-version = "0.7.1"
-
 // Generate TestData.native.kt from template with the absolute resource path baked in
 val generateNativeTestData by tasks.registering {
     val templateFile = layout.projectDirectory.file("src/nativeTest/kotlin/no/synth/kmpzip/zip/TestData.native.kt.template")
