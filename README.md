@@ -10,6 +10,7 @@ Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, and 
 |----------|-------------|
 | `no.synth:kmp-zip` | Core I/O and ZIP streams |
 | `no.synth:kmp-zip-kotlinx` | [kotlinx-io](https://github.com/Kotlin/kotlinx-io) `Source`/`Sink` adapters for the core streams |
+| `no.synth:kmp-zip-okio` | [OkIO](https://square.github.io/okio/) `BufferedSource`/`BufferedSink` adapters for the core streams |
 
 ## Targets
 
@@ -25,10 +26,13 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:0.7.0")
+                implementation("no.synth:kmp-zip:0.7.1")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:0.7.0")
+                implementation("no.synth:kmp-zip-kotlinx:0.7.1")
+
+                // Optional: OkIO adapters
+                implementation("no.synth:kmp-zip-okio:0.7.1")
             }
         }
     }
@@ -67,6 +71,17 @@ kotlin {
 | `Sink.asOutputStream()` | Extension shorthand |
 | `ZipInputStream(Source)` | Factory — creates a `ZipInputStream` from a `Source` |
 | `ZipOutputStream(Sink)` | Factory — creates a `ZipOutputStream` from a `Sink` |
+
+### `kmp-zip-okio` — `no.synth.kmpzip.okio`
+
+| Type | Description |
+|------|-------------|
+| `SourceInputStream(BufferedSource)` | Wraps an OkIO `BufferedSource` as an `InputStream` |
+| `SinkOutputStream(BufferedSink)` | Wraps an OkIO `BufferedSink` as an `OutputStream` |
+| `BufferedSource.asInputStream()` | Extension shorthand |
+| `BufferedSink.asOutputStream()` | Extension shorthand |
+| `ZipInputStream(BufferedSource)` | Factory — creates a `ZipInputStream` from a `BufferedSource` |
+| `ZipOutputStream(BufferedSink)` | Factory — creates a `ZipOutputStream` from a `BufferedSink` |
 
 ## Usage
 
@@ -116,6 +131,29 @@ ZipInputStream(buffer).use { zis ->
 }
 ```
 
+### OkIO: read/write ZIPs via BufferedSource/BufferedSink
+
+```kotlin
+import okio.Buffer
+import no.synth.kmpzip.okio.ZipInputStream
+import no.synth.kmpzip.okio.ZipOutputStream
+
+val buffer = Buffer()
+
+// Write
+ZipOutputStream(buffer).use { zos ->
+    zos.putNextEntry(ZipEntry("hello.txt"))
+    zos.write("Hello from OkIO!".encodeToByteArray())
+    zos.closeEntry()
+}
+
+// Read
+ZipInputStream(buffer).use { zis ->
+    val entry = zis.nextEntry ?: error("Expected entry")
+    println("${entry.name}: ${zis.readBytes().decodeToString()}")
+}
+```
+
 ## Building
 
 Requires JDK 21 and Xcode (for iOS targets).
@@ -131,8 +169,8 @@ Requires JDK 21 and Xcode (for iOS targets).
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v0.7.0
-git push origin v0.7.0
+git tag v0.7.1
+git push origin v0.7.1
 ```
 
 ## License

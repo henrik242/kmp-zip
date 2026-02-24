@@ -10,22 +10,6 @@ repositories {
 group = "no.synth"
 version = "0.7.1"
 
-// Generate TestData.native.kt from template with the absolute resource path baked in
-val generateNativeTestData by tasks.registering {
-    val templateFile = layout.projectDirectory.file("src/nativeTest/kotlin/no/synth/kmpzip/zip/TestData.native.kt.template")
-    val outputDir = layout.buildDirectory.dir("generated/nativeTestData/kotlin")
-    val resourceDir = layout.projectDirectory.dir("src/commonTest/resources/testdata")
-    inputs.file(templateFile)
-    outputs.dir(outputDir)
-    doLast {
-        val dir = outputDir.get().asFile.resolve("no/synth/kmpzip/zip")
-        dir.mkdirs()
-        val content = templateFile.asFile.readText()
-            .replace("@@RESOURCE_DIR@@", resourceDir.asFile.absolutePath)
-        dir.resolve("TestData.native.kt").writeText(content)
-    }
-}
-
 kotlin {
     jvm()
     iosX64()
@@ -37,17 +21,17 @@ kotlin {
     }
 
     sourceSets {
+        commonMain {
+            dependencies {
+                api(project(":kmp-zip"))
+                implementation(libs.okio)
+            }
+        }
         commonTest {
             dependencies {
                 implementation(kotlin("test"))
+                implementation(libs.okio)
             }
-        }
-        nativeTest {
-            kotlin.srcDir(
-                generateNativeTestData.map {
-                    layout.buildDirectory.dir("generated/nativeTestData/kotlin")
-                }
-            )
         }
     }
 }
@@ -59,8 +43,8 @@ mavenPublishing {
     }
 
     pom {
-        name.set("kmp-zip")
-        description.set("Kotlin Multiplatform ZIP streams for JVM and iOS")
+        name.set("kmp-zip-okio")
+        description.set("OkIO BufferedSource/BufferedSink adapters for kmp-zip ZipInputStream and ZipOutputStream")
         url.set("https://github.com/henrik242/kmp-zip")
         licenses {
             license {
