@@ -7,9 +7,6 @@ repositories {
     mavenCentral()
 }
 
-group = "no.synth"
-version = "0.7.1"
-
 kotlin {
     jvm()
     iosX64()
