@@ -27,3 +27,5 @@ jobs:
           languages: kotlin
       - run: ./gradlew jvmTestClasses
       - uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:java-kotlin
