@@ -9,14 +9,13 @@ internal class Deflater {
     private var finished = false
     private var initialized = false
 
-    fun init(level: Int = Z_DEFAULT_COMPRESSION) {
+    fun init(level: Int = Z_DEFAULT_COMPRESSION, wbits: Int = -MAX_WBITS) {
         stream.zalloc = null
         stream.zfree = null
         stream.opaque = null
         stream.avail_in = 0u
         stream.next_in = null
-        // -MAX_WBITS for raw deflate (no zlib/gzip header)
-        val ret = deflateInit2(stream.ptr, level, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY)
+        val ret = deflateInit2(stream.ptr, level, Z_DEFLATED, wbits, 8, Z_DEFAULT_STRATEGY)
         if (ret != Z_OK) throw Exception("deflateInit2 failed: $ret")
         initialized = true
     }

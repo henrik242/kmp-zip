@@ -15,4 +15,5 @@ expect object TestData {
     val cliMixedZip: ByteArray
     val sevenStoredZip: ByteArray
     val sevenDeflatedZip: ByteArray
+    val cliGzip: ByteArray
 }

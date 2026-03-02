@@ -1,0 +1,66 @@
+package no.synth.kmpzip.gzip
+
+import no.synth.kmpzip.io.InputStream
+import no.synth.kmpzip.zip.Inflater
+import platform.zlib.MAX_WBITS
+
+actual class GzipInputStream actual constructor(private val input: InputStream) : InputStream() {
+    private val inflater = Inflater().also { it.init(MAX_WBITS + 16) }
+    private val inputBuf = ByteArray(8192)
+    private var inputBufPos = 0
+    private var inputBufLen = 0
+    private var closed = false
+    private var eof = false
+
+    actual override fun read(): Int {
+        val b = ByteArray(1)
+        val n = read(b, 0, 1)
+        return if (n == -1) -1 else b[0].toInt() and 0xFF
+    }
+
+    actual override fun read(b: ByteArray, off: Int, len: Int): Int {
+        if (closed || eof) return -1
+        if (len == 0) return 0
+
+        while (true) {
+            // Try to inflate from the current input buffer
+            if (inputBufLen > inputBufPos) {
+                val result = inflater.inflate(
+                    inputBuf, inputBufPos, inputBufLen - inputBufPos,
+                    b, off, len
+                )
+                inputBufPos += result.bytesConsumed
+
+                if (result.bytesProduced > 0) {
+                    if (result.streamEnd) eof = true
+                    return result.bytesProduced
+                }
+                if (result.streamEnd) {
+                    eof = true
+                    return -1
+                }
+            }
+
+            // Need more input data
+            val n = input.read(inputBuf, 0, inputBuf.size)
+            if (n == -1) {
+                eof = true
+                return -1
+            }
+            inputBufPos = 0
+            inputBufLen = n
+        }
+    }
+
+    actual override fun available(): Int {
+        return if (eof || closed) 0 else 1
+    }
+
+    actual override fun close() {
+        if (!closed) {
+            closed = true
+            inflater.end()
+            input.close()
+        }
+    }
+}

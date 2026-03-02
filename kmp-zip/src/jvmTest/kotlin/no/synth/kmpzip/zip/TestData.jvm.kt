@@ -18,4 +18,5 @@ actual object TestData {
     actual val cliMixedZip: ByteArray get() = loadResource("cli-mixed.zip")
     actual val sevenStoredZip: ByteArray get() = loadResource("seven-stored.zip")
     actual val sevenDeflatedZip: ByteArray get() = loadResource("seven-deflated.zip")
+    actual val cliGzip: ByteArray get() = loadResource("cli.gz")
 }

@@ -9,14 +9,13 @@ internal class Inflater {
     private var finished = false
     private var initialized = false
 
-    fun init() {
+    fun init(wbits: Int = -MAX_WBITS) {
         stream.zalloc = null
         stream.zfree = null
         stream.opaque = null
         stream.avail_in = 0u
         stream.next_in = null
-        // -MAX_WBITS for raw deflate (no zlib/gzip header)
-        val ret = inflateInit2(stream.ptr, -MAX_WBITS)
+        val ret = inflateInit2(stream.ptr, wbits)
         if (ret != Z_OK) throw Exception("inflateInit2 failed: $ret")
         initialized = true
     }
