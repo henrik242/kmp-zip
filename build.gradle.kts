@@ -3,5 +3,7 @@ plugins {
     alias(libs.plugins.maven.publish) apply false
 }
 
-group = "no.synth"
-version = "0.7.2"
+allprojects {
+    group = "no.synth"
+    version = "0.7.2"
+}
