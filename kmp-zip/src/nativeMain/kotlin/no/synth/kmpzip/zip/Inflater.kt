@@ -27,9 +27,9 @@ internal class Inflater {
             val inPin = input.pin()
             val outPin = output.pin()
             try {
-                stream.next_in = (inPin.addressOf(inputOffset) as CPointer<UByteVar>)
+                stream.next_in = toUBytePointer(inPin, inputOffset)
                 stream.avail_in = inputLen.toUInt()
-                stream.next_out = (outPin.addressOf(outputOffset) as CPointer<UByteVar>)
+                stream.next_out = toUBytePointer(outPin, outputOffset)
                 stream.avail_out = outputLen.toUInt()
 
                 val ret = inflate(stream.ptr, Z_NO_FLUSH)

@@ -31,12 +31,12 @@ internal class Deflater {
         val inPin = if (inputLen > 0) input.pin() else null
         return try {
             if (inPin != null) {
-                stream.next_in = (inPin.addressOf(inputOffset) as CPointer<UByteVar>)
+                stream.next_in = toUBytePointer(inPin, inputOffset)
             } else {
                 stream.next_in = null
             }
             stream.avail_in = inputLen.toUInt()
-            stream.next_out = (outPin.addressOf(outputOffset) as CPointer<UByteVar>)
+            stream.next_out = toUBytePointer(outPin, outputOffset)
             stream.avail_out = outputLen.toUInt()
 
             val ret = deflate(stream.ptr, flush)

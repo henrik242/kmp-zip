@@ -291,7 +291,7 @@ actual class ZipOutputStream actual constructor(private val output: OutputStream
     private fun updateCrc(data: ByteArray, off: Int, len: Int) {
         if (len == 0) return
         data.usePinned { pinned ->
-            entryCrc = crc32(entryCrc, (pinned.addressOf(off) as CPointer<UByteVar>), len.toUInt())
+            entryCrc = crc32(entryCrc, toUBytePointer(pinned, off), len.toUInt())
         }
     }
 
