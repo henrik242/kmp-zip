@@ -1,14 +1,14 @@
 # kmp-zip
 
-Kotlin Multiplatform ZIP library for JVM and iOS targets.
+Kotlin Multiplatform ZIP and GZIP library for JVM and iOS targets.
 
-Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, and `ZipOutputStream` with a common API across platforms. On JVM, the implementations delegate to `java.io` and `java.util.zip`. On iOS/Native, they are pure Kotlin implementations using `platform.zlib` for DEFLATE compression and decompression.
+Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, and `GzipOutputStream` with a common API across platforms. On JVM, the implementations delegate to `java.io` and `java.util.zip`. On iOS/Native, they are pure Kotlin implementations using `platform.zlib` for DEFLATE compression and decompression.
 
 ## Modules
 
 | Artifact | Description |
 |----------|-------------|
-| `no.synth:kmp-zip` | Core I/O and ZIP streams |
+| `no.synth:kmp-zip` | Core I/O, ZIP, and GZIP streams |
 | `no.synth:kmp-zip-kotlinx` | [kotlinx-io](https://github.com/Kotlin/kotlinx-io) `Source`/`Sink` adapters for the core streams |
 | `no.synth:kmp-zip-okio` | [OkIO](https://square.github.io/okio/) `BufferedSource`/`BufferedSink` adapters for the core streams |
 
@@ -61,6 +61,14 @@ kotlin {
 | `ZipEntry` | Entry metadata — `name`, `size`, `compressedSize`, `crc`, `method`, `isDirectory`, `time`, `comment`, `extra` |
 | `ZipConstants` | `STORED = 0`, `DEFLATED = 8` |
 
+### `kmp-zip` — `no.synth.kmpzip.gzip`
+
+| Type | Description |
+|------|-------------|
+| `GzipInputStream(InputStream)` | Decompresses a GZIP stream — `read()`, `available()`, `close()` |
+| `GzipInputStream(ByteArray)` | Convenience factory |
+| `GzipOutputStream(OutputStream)` | Compresses data in GZIP format — `write()`, `finish()`, `flush()`, `close()` |
+
 ### `kmp-zip-kotlinx` — `no.synth.kmpzip.kotlinx`
 
 | Type | Description |
@@ -71,6 +79,8 @@ kotlin {
 | `Sink.asOutputStream()` | Extension shorthand |
 | `ZipInputStream(Source)` | Factory — creates a `ZipInputStream` from a `Source` |
 | `ZipOutputStream(Sink)` | Factory — creates a `ZipOutputStream` from a `Sink` |
+| `GzipInputStream(Source)` | Factory — creates a `GzipInputStream` from a `Source` |
+| `GzipOutputStream(Sink)` | Factory — creates a `GzipOutputStream` from a `Sink` |
 
 ### `kmp-zip-okio` — `no.synth.kmpzip.okio`
 
@@ -82,6 +92,8 @@ kotlin {
 | `BufferedSink.asOutputStream()` | Extension shorthand |
 | `ZipInputStream(BufferedSource)` | Factory — creates a `ZipInputStream` from a `BufferedSource` |
 | `ZipOutputStream(BufferedSink)` | Factory — creates a `ZipOutputStream` from a `BufferedSink` |
+| `GzipInputStream(BufferedSource)` | Factory — creates a `GzipInputStream` from a `BufferedSource` |
+| `GzipOutputStream(BufferedSink)` | Factory — creates a `GzipOutputStream` from a `BufferedSink` |
 
 ## Usage
 
@@ -106,6 +118,22 @@ ZipOutputStream(buf).use { zos ->
     zos.closeEntry()
 }
 val zipBytes = buf.toByteArray()
+```
+
+### GZIP compress and decompress
+
+```kotlin
+// Compress
+val buf = ByteArrayOutputStream()
+GzipOutputStream(buf).use { gzos ->
+    gzos.write("Hello, world!".encodeToByteArray())
+}
+val gzipped = buf.toByteArray()
+
+// Decompress
+val text = GzipInputStream(gzipped).use { gzis ->
+    gzis.readBytes().decodeToString()
+}
 ```
 
 ### kotlinx-io: read/write ZIPs via Source/Sink
