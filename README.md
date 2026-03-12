@@ -9,8 +9,8 @@ Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `Zip
 | Artifact | Description |
 |----------|-------------|
 | `no.synth:kmp-zip` | Core I/O, ZIP, and GZIP streams |
-| `no.synth:kmp-zip-kotlinx` | [kotlinx-io](https://github.com/Kotlin/kotlinx-io) `Source`/`Sink` adapters for the core streams |
-| `no.synth:kmp-zip-okio` | [OkIO](https://square.github.io/okio/) `BufferedSource`/`BufferedSink` adapters for the core streams |
+| `no.synth:kmp-zip-kotlinx` | [kotlinx-io](https://github.com/Kotlin/kotlinx-io) `Source`/`Sink` adapters (both directions) for the core streams |
+| `no.synth:kmp-zip-okio` | [OkIO](https://square.github.io/okio/) `BufferedSource`/`BufferedSink`/`Source`/`Sink` adapters (both directions) for the core streams |
 
 ## Targets
 
@@ -26,13 +26,13 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:0.7.2")
+                implementation("no.synth:kmp-zip:0.8.0")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:0.7.2")
+                implementation("no.synth:kmp-zip-kotlinx:0.8.0")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:0.7.2")
+                implementation("no.synth:kmp-zip-okio:0.8.0")
             }
         }
     }
@@ -75,8 +75,12 @@ kotlin {
 |------|-------------|
 | `SourceInputStream(Source)` | Wraps a kotlinx-io `Source` as an `InputStream` |
 | `SinkOutputStream(Sink)` | Wraps a kotlinx-io `Sink` as an `OutputStream` |
+| `InputStreamSource(InputStream)` | Wraps an `InputStream` as a kotlinx-io `RawSource` |
+| `OutputStreamSink(OutputStream)` | Wraps an `OutputStream` as a kotlinx-io `RawSink` |
 | `Source.asInputStream()` | Extension shorthand |
 | `Sink.asOutputStream()` | Extension shorthand |
+| `InputStream.asSource()` | Extension shorthand |
+| `OutputStream.asSink()` | Extension shorthand |
 | `ZipInputStream(Source)` | Factory — creates a `ZipInputStream` from a `Source` |
 | `ZipOutputStream(Sink)` | Factory — creates a `ZipOutputStream` from a `Sink` |
 | `GzipInputStream(Source)` | Factory — creates a `GzipInputStream` from a `Source` |
@@ -88,8 +92,12 @@ kotlin {
 |------|-------------|
 | `SourceInputStream(BufferedSource)` | Wraps an OkIO `BufferedSource` as an `InputStream` |
 | `SinkOutputStream(BufferedSink)` | Wraps an OkIO `BufferedSink` as an `OutputStream` |
+| `InputStreamSource(InputStream)` | Wraps an `InputStream` as an OkIO `Source` |
+| `OutputStreamSink(OutputStream)` | Wraps an `OutputStream` as an OkIO `Sink` |
 | `BufferedSource.asInputStream()` | Extension shorthand |
 | `BufferedSink.asOutputStream()` | Extension shorthand |
+| `InputStream.asSource()` | Extension shorthand |
+| `OutputStream.asSink()` | Extension shorthand |
 | `ZipInputStream(BufferedSource)` | Factory — creates a `ZipInputStream` from a `BufferedSource` |
 | `ZipOutputStream(BufferedSink)` | Factory — creates a `ZipOutputStream` from a `BufferedSink` |
 | `GzipInputStream(BufferedSource)` | Factory — creates a `GzipInputStream` from a `BufferedSource` |
@@ -182,6 +190,47 @@ ZipInputStream(buffer).use { zis ->
 }
 ```
 
+### Stream data directly into a ZIP entry via Sink
+
+The reverse adapters (`OutputStream.asSink()` / `InputStream.asSource()`) let you write into
+a ZIP entry through a `Sink`, which is useful for streaming serialization (e.g. kotlinx-serialization's
+`encodeToSink`).
+
+**OkIO:**
+
+```kotlin
+import okio.buffer
+import no.synth.kmpzip.okio.ZipOutputStream
+import no.synth.kmpzip.okio.asSink
+
+ZipOutputStream(sink).use { zos ->
+    zos.putNextEntry(ZipEntry("data.json"))
+    val entrySink = zos.asSink().buffer()
+    // Stream directly into the ZIP entry — e.g. Json.encodeToSink(serializer, value, entrySink)
+    entrySink.writeUtf8("""{"hello": "world"}""")
+    entrySink.flush()
+    zos.closeEntry()
+}
+```
+
+**kotlinx-io:**
+
+```kotlin
+import kotlinx.io.buffered
+import kotlinx.io.writeString
+import no.synth.kmpzip.kotlinx.ZipOutputStream
+import no.synth.kmpzip.kotlinx.asSink
+
+ZipOutputStream(sink).use { zos ->
+    zos.putNextEntry(ZipEntry("data.json"))
+    val entrySink = zos.asSink().buffered()
+    // Stream directly into the ZIP entry — e.g. Json.encodeToSink(serializer, value, entrySink)
+    entrySink.writeString("""{"hello": "world"}""")
+    entrySink.flush()
+    zos.closeEntry()
+}
+```
+
 ## Building
 
 Requires JDK 21 and Xcode (for iOS targets).
@@ -197,8 +246,8 @@ Requires JDK 21 and Xcode (for iOS targets).
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v0.7.2
-git push origin v0.7.2
+git tag v0.8.0
+git push origin v0.8.0
 ```
 
 ## License
