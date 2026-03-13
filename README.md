@@ -190,9 +190,49 @@ ZipInputStream(buffer).use { zis ->
 }
 ```
 
+### Stream data from a ZIP entry via Source
+
+The `InputStream.asSource()` adapter lets you read a ZIP entry through a `Source`, which is useful
+for streaming deserialization (e.g. kotlinx-serialization's `decodeFromBufferedSource`).
+
+**OkIO:**
+
+```kotlin
+import okio.buffer
+import no.synth.kmpzip.okio.ZipInputStream
+import no.synth.kmpzip.okio.asSource
+
+ZipInputStream(source).use { zis ->
+    val entry = zis.nextEntry
+    if (entry != null) {
+        val entrySource = zis.asSource().buffer()
+        // Stream directly from the ZIP entry — e.g. Json.decodeFromBufferedSource(serializer, entrySource)
+        println("${entry.name}: ${entrySource.readUtf8()}")
+    }
+}
+```
+
+**kotlinx-io:**
+
+```kotlin
+import kotlinx.io.buffered
+import kotlinx.io.readString
+import no.synth.kmpzip.kotlinx.ZipInputStream
+import no.synth.kmpzip.kotlinx.asSource
+
+ZipInputStream(source).use { zis ->
+    val entry = zis.nextEntry
+    if (entry != null) {
+        val entrySource = zis.asSource().buffered()
+        // Stream directly from the ZIP entry — e.g. Json.decodeFromBufferedSource(serializer, entrySource)
+        println("${entry.name}: ${entrySource.readString()}")
+    }
+}
+```
+
 ### Stream data directly into a ZIP entry via Sink
 
-The reverse adapters (`OutputStream.asSink()` / `InputStream.asSource()`) let you write into
+The `OutputStream.asSink()` adapter lets you write into
 a ZIP entry through a `Sink`, which is useful for streaming serialization (e.g. kotlinx-serialization's
 `encodeToSink`).
 
