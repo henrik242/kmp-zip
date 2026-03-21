@@ -16,4 +16,11 @@ expect object TestData {
     val sevenStoredZip: ByteArray
     val sevenDeflatedZip: ByteArray
     val cliGzip: ByteArray
+
+    // AES-encrypted test ZIPs (password: "password")
+    val aes128DeflatedZip: ByteArray
+    val aes256BinaryZip: ByteArray
+    val aes256DeflatedZip: ByteArray
+    val aes256MultiZip: ByteArray
+    val aes256StoredZip: ByteArray
 }

@@ -1,0 +1,77 @@
+package no.synth.kmpzip.zip
+
+import kotlinx.cinterop.*
+import platform.zlib.*
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual class PlatformDeflater actual constructor() {
+    private var stream: z_stream? = null
+    private var finished = false
+
+    actual fun init(level: Int, nowrap: Boolean, gzip: Boolean) {
+        val s = nativeHeap.alloc<z_stream>()
+        s.zalloc = null
+        s.zfree = null
+        s.opaque = null
+        s.avail_in = 0u
+        s.next_in = null
+        val wbits = when {
+            gzip -> MAX_WBITS + 16
+            nowrap -> -MAX_WBITS
+            else -> MAX_WBITS
+        }
+        val ret = deflateInit2(s.ptr, level, Z_DEFLATED, wbits, 8, Z_DEFAULT_STRATEGY)
+        if (ret != Z_OK) {
+            nativeHeap.free(s)
+            throw Exception("deflateInit2 failed: $ret")
+        }
+        stream = s
+        finished = false
+    }
+
+    actual fun deflate(
+        input: ByteArray, inputOffset: Int, inputLen: Int,
+        output: ByteArray, outputOffset: Int, outputLen: Int,
+        finish: Boolean,
+    ): DeflateResult {
+        val s = stream ?: throw IllegalStateException("Deflater not initialized")
+
+        val outPin = output.pin()
+        val inPin = if (inputLen > 0) input.pin() else null
+        return try {
+            if (inPin != null) {
+                s.next_in = toUBytePointer(inPin, inputOffset)
+            } else {
+                s.next_in = null
+            }
+            s.avail_in = inputLen.toUInt()
+            s.next_out = toUBytePointer(outPin, outputOffset)
+            s.avail_out = outputLen.toUInt()
+
+            val flush = if (finish) Z_FINISH else Z_NO_FLUSH
+            val ret = deflate(s.ptr, flush)
+            if (ret != Z_OK && ret != Z_STREAM_END && ret != Z_BUF_ERROR) {
+                throw Exception("deflate failed: $ret")
+            }
+
+            val bytesConsumed = inputLen - s.avail_in.toInt()
+            val bytesProduced = outputLen - s.avail_out.toInt()
+            finished = ret == Z_STREAM_END
+
+            DeflateResult(bytesConsumed, bytesProduced, finished)
+        } finally {
+            inPin?.unpin()
+            outPin.unpin()
+        }
+    }
+
+    actual fun end() {
+        stream?.let {
+            deflateEnd(it.ptr)
+            nativeHeap.free(it)
+        }
+        stream = null
+    }
+
+    actual val isFinished: Boolean get() = finished
+}

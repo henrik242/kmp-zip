@@ -1,11 +1,10 @@
 package no.synth.kmpzip.gzip
 
 import no.synth.kmpzip.io.InputStream
-import no.synth.kmpzip.zip.Inflater
-import platform.zlib.MAX_WBITS
+import no.synth.kmpzip.zip.PlatformInflater
 
 actual class GzipInputStream actual constructor(private val input: InputStream) : InputStream() {
-    private val inflater = Inflater().also { it.init(MAX_WBITS + 16) }
+    private val inflater = PlatformInflater().also { it.init(gzip = true) }
     private val inputBuf = ByteArray(8192)
     private var inputBufPos = 0
     private var inputBufLen = 0

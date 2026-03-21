@@ -19,4 +19,11 @@ actual object TestData {
     actual val sevenStoredZip: ByteArray get() = loadResource("seven-stored.zip")
     actual val sevenDeflatedZip: ByteArray get() = loadResource("seven-deflated.zip")
     actual val cliGzip: ByteArray get() = loadResource("cli.gz")
+
+    // AES-encrypted test ZIPs
+    actual val aes128DeflatedZip: ByteArray get() = loadResource("aes128-deflated.zip")
+    actual val aes256BinaryZip: ByteArray get() = loadResource("aes256-binary.zip")
+    actual val aes256DeflatedZip: ByteArray get() = loadResource("aes256-deflated.zip")
+    actual val aes256MultiZip: ByteArray get() = loadResource("aes256-multi.zip")
+    actual val aes256StoredZip: ByteArray get() = loadResource("aes256-stored.zip")
 }

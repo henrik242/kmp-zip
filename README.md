@@ -1,8 +1,10 @@
 # kmp-zip
 
-Kotlin Multiplatform ZIP and GZIP library for JVM and iOS targets.
+Kotlin Multiplatform ZIP and GZIP library for JVM and iOS targets, with **AES encryption** support.
 
-Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, and `GzipOutputStream` with a common API across platforms. On JVM, the implementations delegate to `java.io` and `java.util.zip`. On iOS/Native, they are pure Kotlin implementations using `platform.zlib` for DEFLATE compression and decompression.
+Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, and `GzipOutputStream` with a common API across platforms. Supports reading and writing [WinZip AES-encrypted](https://www.winzip.com/en/support/aes-encryption/) ZIP archives (AES-128/192/256, AE-1 and AE-2 formats), compatible with 7-Zip, WinRAR, and other tools.
+
+All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on iOS/Native.
 
 ## Modules
 
@@ -55,11 +57,20 @@ kotlin {
 
 | Type | Description |
 |------|-------------|
-| `ZipInputStream(InputStream)` | Reads ZIP entries — `nextEntry`, `closeEntry()`, `read()`, `readBytes()` |
-| `ZipInputStream(ByteArray)` | Convenience factory |
-| `ZipOutputStream(OutputStream)` | Writes ZIP entries — `putNextEntry()`, `closeEntry()`, `write()`, `finish()`, `setMethod()`, `setLevel()` |
+| `ZipInputStream(InputStream, password?)` | Reads ZIP entries — `nextEntry`, `closeEntry()`, `read()`, `readBytes()`. Pass a password (`ByteArray` or `String`) to decrypt AES-encrypted entries. |
+| `ZipInputStream(ByteArray, password?)` | Convenience factory |
+| `ZipOutputStream(OutputStream, password?, aesStrength?)` | Writes ZIP entries — `putNextEntry()`, `closeEntry()`, `write()`, `finish()`, `setMethod()`, `setLevel()`. Pass a password to AES-encrypt all entries. |
 | `ZipEntry` | Entry metadata — `name`, `size`, `compressedSize`, `crc`, `method`, `isDirectory`, `time`, `comment`, `extra` |
 | `ZipConstants` | `STORED = 0`, `DEFLATED = 8` |
+| `AesStrength` | `AES_128`, `AES_192`, `AES_256` (default) |
+
+### `kmp-zip` — `no.synth.kmpzip.crypto`
+
+| Type | Description |
+|------|-------------|
+| `Crypto.pbkdf2(password, salt, iterations, keyLengthBytes)` | PBKDF2 key derivation with HMAC-SHA1 |
+| `Crypto.hmacSha1(key, data)` | HMAC-SHA1 message authentication |
+| `Crypto.randomBytes(size)` | Cryptographically secure random bytes |
 
 ### `kmp-zip` — `no.synth.kmpzip.gzip`
 
@@ -126,6 +137,58 @@ ZipOutputStream(buf).use { zos ->
     zos.closeEntry()
 }
 val zipBytes = buf.toByteArray()
+```
+
+### Read an AES-encrypted ZIP
+
+```kotlin
+ZipInputStream(zipBytes, password = "secret").use { zis ->
+    while (true) {
+        val entry = zis.nextEntry ?: break
+        println("${entry.name}: ${zis.readBytes().decodeToString()}")
+    }
+}
+```
+
+### Create an AES-encrypted ZIP
+
+```kotlin
+val buf = ByteArrayOutputStream()
+ZipOutputStream(buf, password = "secret").use { zos ->
+    zos.putNextEntry(ZipEntry("hello.txt"))
+    zos.write("Hello, encrypted world!".encodeToByteArray())
+    zos.closeEntry()
+}
+val encryptedZipBytes = buf.toByteArray()
+```
+
+By default, entries are encrypted with AES-256 and DEFLATED compression. You can choose a different strength:
+
+```kotlin
+ZipOutputStream(buf, password = "secret", aesStrength = AesStrength.AES_128)
+```
+
+### Standalone crypto primitives
+
+The `Crypto` object provides cross-platform cryptographic primitives that can be used independently of ZIP:
+
+```kotlin
+import no.synth.kmpzip.crypto.Crypto
+
+// PBKDF2 key derivation
+val salt = Crypto.randomBytes(16)
+val key = Crypto.pbkdf2(
+    password = "secret".encodeToByteArray(),
+    salt = salt,
+    iterations = 100_000,
+    keyLengthBytes = 32,
+)
+
+// HMAC-SHA1
+val mac = Crypto.hmacSha1(key, data = "message".encodeToByteArray())
+
+// Secure random
+val nonce = Crypto.randomBytes(12)
 ```
 
 ### GZIP compress and decompress
