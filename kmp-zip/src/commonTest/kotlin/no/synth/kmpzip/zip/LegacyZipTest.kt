@@ -1,6 +1,5 @@
 package no.synth.kmpzip.zip
 
-import no.synth.kmpzip.crypto.AesStrength
 import no.synth.kmpzip.io.ByteArrayOutputStream
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -8,64 +7,43 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
-class AesZipTest {
+class LegacyZipTest {
 
     private val testPassword = "password"
 
-    private fun readEntryContent(zis: ZipInputStream): String {
-        return zis.readBytes().decodeToString()
-    }
-
-    // ---- Reading externally-created AES-encrypted ZIPs ----
+    // ---- Reading macOS zip-created legacy-encrypted ZIPs ----
 
     @Test
-    fun readAes256StoredEntry() {
-        val zis = ZipInputStream(TestData.aes256StoredZip, testPassword)
+    fun readLegacyStoredEntry() {
+        val zis = ZipInputStream(TestData.legacyStoredZip, testPassword)
         val entry = zis.nextEntry
         assertNotNull(entry)
         assertEquals("hello.txt", entry.name)
-        assertEquals(ZipConstants.STORED, entry.method)
-        assertEquals("Hello, AES World\\!", readEntryContent(zis))
+        assertEquals("Hello, ZipCrypto World!", zis.readBytes().decodeToString())
         assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
-    fun readAes256DeflatedEntry() {
-        val expectedContent = "Hello, AES World! ".repeat(100)
-        val zis = ZipInputStream(TestData.aes256DeflatedZip, testPassword)
+    fun readLegacyDeflatedEntry() {
+        val expectedContent = "Hello, ZipCrypto! ".repeat(100)
+        val zis = ZipInputStream(TestData.legacyDeflatedZip, testPassword)
         val entry = zis.nextEntry
         assertNotNull(entry)
-        assertEquals("hello.txt", entry.name)
-        assertEquals(ZipConstants.DEFLATED, entry.method)
-        assertEquals(expectedContent, readEntryContent(zis))
+        assertEquals("hello-long.txt", entry.name)
+        assertEquals(expectedContent, zis.readBytes().decodeToString())
         assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
-    fun readAes128DeflatedEntry() {
-        val expectedContent = "Hello, AES World! ".repeat(100)
-        val zis = ZipInputStream(TestData.aes128DeflatedZip, testPassword)
-        val entry = zis.nextEntry
-        assertNotNull(entry)
-        assertEquals("hello.txt", entry.name)
-        assertEquals(ZipConstants.DEFLATED, entry.method)
-        assertEquals(expectedContent, readEntryContent(zis))
-        assertNull(zis.nextEntry)
-        zis.close()
-    }
-
-    @Test
-    fun readAes256BinaryEntry() {
-        val zis = ZipInputStream(TestData.aes256BinaryZip, testPassword)
+    fun readLegacyBinaryEntry() {
+        val zis = ZipInputStream(TestData.legacyBinaryZip, testPassword)
         val entry = zis.nextEntry
         assertNotNull(entry)
         assertEquals("raw.bin", entry.name)
-        assertEquals(ZipConstants.STORED, entry.method)
 
         val data = zis.readBytes()
-        assertEquals(7, data.size)
         val expected = byteArrayOf(0x00, 0x01, 0x02, 0x03, 0xFF.toByte(), 0xFE.toByte(), 0xFD.toByte())
         assertContentEquals(expected, data)
 
@@ -74,18 +52,18 @@ class AesZipTest {
     }
 
     @Test
-    fun readAes256MultiEntry() {
-        val zis = ZipInputStream(TestData.aes256MultiZip, testPassword)
+    fun readLegacyMultiEntry() {
+        val zis = ZipInputStream(TestData.legacyMultiZip, testPassword)
 
         val entry1 = zis.nextEntry
         assertNotNull(entry1)
         assertEquals("hello.txt", entry1.name)
-        assertEquals("Hello, AES World! ".repeat(100), readEntryContent(zis))
+        assertEquals("Hello, ZipCrypto World!", zis.readBytes().decodeToString())
 
         val entry2 = zis.nextEntry
         assertNotNull(entry2)
         assertEquals("second.txt", entry2.name)
-        assertEquals("Second encrypted file! ".repeat(50), readEntryContent(zis))
+        assertEquals("Second legacy file", zis.readBytes().decodeToString())
 
         assertNull(zis.nextEntry)
         zis.close()
@@ -93,46 +71,43 @@ class AesZipTest {
 
     @Test
     fun wrongPasswordReturnsNull() {
-        // nextEntry catches the password verification failure and returns null
-        val zis = ZipInputStream(TestData.aes256StoredZip, "wrongpassword")
+        val zis = ZipInputStream(TestData.legacyStoredZip, "wrongpassword")
         assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
     fun noPasswordReturnsNull() {
-        // nextEntry catches the "password required" exception and returns null
-        val zis = ZipInputStream(TestData.aes256StoredZip)
+        val zis = ZipInputStream(TestData.legacyStoredZip)
         assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
-    fun closeEntrySkipsEncryptedData() {
-        val zis = ZipInputStream(TestData.aes256MultiZip, testPassword)
+    fun closeEntrySkipsLegacyData() {
+        val zis = ZipInputStream(TestData.legacyMultiZip, testPassword)
 
         val entry1 = zis.nextEntry
         assertNotNull(entry1)
-        // Don't read, just close entry
         zis.closeEntry()
 
         val entry2 = zis.nextEntry
         assertNotNull(entry2)
         assertEquals("second.txt", entry2.name)
-        assertEquals("Second encrypted file! ".repeat(50), readEntryContent(zis))
+        assertEquals("Second legacy file", zis.readBytes().decodeToString())
 
         zis.close()
     }
 
-    // ---- Round-trip tests: write encrypted then read back ----
+    // ---- Round-trip tests: write legacy-encrypted then read back ----
 
     @Test
     fun roundTripDeflated() {
-        val content = "Hello, encrypted world!"
+        val content = "Hello, legacy encrypted!"
         val password = "testpass"
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray())
+        val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         zos.putNextEntry(ZipEntry("hello.txt"))
         zos.write(content.encodeToByteArray())
         zos.closeEntry()
@@ -142,19 +117,18 @@ class AesZipTest {
         val entry = zis.nextEntry
         assertNotNull(entry)
         assertEquals("hello.txt", entry.name)
-        assertEquals(ZipConstants.DEFLATED, entry.method)
-        assertEquals(content, readEntryContent(zis))
+        assertEquals(content, zis.readBytes().decodeToString())
         assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
     fun roundTripStored() {
-        val content = "Hello, stored encrypted!"
+        val content = "Hello, stored legacy!"
         val password = "testpass"
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray())
+        val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         val entry = ZipEntry("stored.txt")
         entry.method = ZipConstants.STORED
         entry.size = content.length.toLong()
@@ -168,8 +142,7 @@ class AesZipTest {
         val readEntry = zis.nextEntry
         assertNotNull(readEntry)
         assertEquals("stored.txt", readEntry.name)
-        assertEquals(ZipConstants.STORED, readEntry.method)
-        assertEquals(content, readEntryContent(zis))
+        assertEquals(content, zis.readBytes().decodeToString())
         assertNull(zis.nextEntry)
         zis.close()
     }
@@ -178,13 +151,12 @@ class AesZipTest {
     fun roundTripMultipleEntries() {
         val password = "testpass"
         val entries = listOf(
-            "file1.txt" to "First encrypted content",
-            "file2.txt" to "Second encrypted content",
-            "file3.txt" to "Third encrypted content",
+            "file1.txt" to "First legacy content",
+            "file2.txt" to "Second legacy content",
         )
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray())
+        val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         for ((name, content) in entries) {
             zos.putNextEntry(ZipEntry(name))
             zos.write(content.encodeToByteArray())
@@ -197,7 +169,7 @@ class AesZipTest {
             val entry = zis.nextEntry
             assertNotNull(entry, "Expected entry: $expectedName")
             assertEquals(expectedName, entry.name)
-            assertEquals(expectedContent, readEntryContent(zis))
+            assertEquals(expectedContent, zis.readBytes().decodeToString())
         }
         assertNull(zis.nextEntry)
         zis.close()
@@ -209,7 +181,7 @@ class AesZipTest {
         val password = "testpass"
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray())
+        val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         zos.putNextEntry(ZipEntry("binary.dat"))
         zos.write(binaryData)
         zos.closeEntry()
@@ -218,9 +190,7 @@ class AesZipTest {
         val zis = ZipInputStream(baos.toByteArray(), password)
         val entry = zis.nextEntry
         assertNotNull(entry)
-        assertEquals("binary.dat", entry.name)
         assertContentEquals(binaryData, zis.readBytes())
-        assertNull(zis.nextEntry)
         zis.close()
     }
 
@@ -230,7 +200,7 @@ class AesZipTest {
         val password = "testpass"
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray())
+        val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         zos.putNextEntry(ZipEntry("large.bin"))
         zos.write(largeData)
         zos.closeEntry()
@@ -240,18 +210,40 @@ class AesZipTest {
         val entry = zis.nextEntry
         assertNotNull(entry)
         assertContentEquals(largeData, zis.readBytes())
-        assertNull(zis.nextEntry)
         zis.close()
     }
 
     @Test
-    fun roundTripAes128() {
-        val content = "AES-128 content"
-        val password = "testpass"
+    fun roundTripWrongPasswordFails() {
+        val content = "Secret data"
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray(), aesStrength = AesStrength.AES_128)
-        zos.putNextEntry(ZipEntry("aes128.txt"))
+        val zos = ZipOutputStream(baos, "correctpassword".encodeToByteArray(), encryption = ZipEncryption.LEGACY)
+        zos.putNextEntry(ZipEntry("secret.txt"))
+        zos.write(content.encodeToByteArray())
+        zos.closeEntry()
+        zos.close()
+
+        val zis = ZipInputStream(baos.toByteArray(), "wrongpassword")
+        // Wrong password may fail at header check or produce garbage
+        val entry = zis.nextEntry
+        // Either null (check byte failed) or entry with corrupted data
+        if (entry != null) {
+            val data = zis.readBytes().decodeToString()
+            // Data should not match original
+            assertEquals(false, data == content)
+        }
+        zis.close()
+    }
+
+    @Test
+    fun roundTripStringPasswordConvenience() {
+        val content = "String password test"
+        val password = "mypassword"
+
+        val baos = ByteArrayOutputStream()
+        val zos = ZipOutputStream(baos, password, ZipEncryption.LEGACY)
+        zos.putNextEntry(ZipEntry("test.txt"))
         zos.write(content.encodeToByteArray())
         zos.closeEntry()
         zos.close()
@@ -259,26 +251,7 @@ class AesZipTest {
         val zis = ZipInputStream(baos.toByteArray(), password)
         val entry = zis.nextEntry
         assertNotNull(entry)
-        assertEquals(content, readEntryContent(zis))
-        zis.close()
-    }
-
-    @Test
-    fun roundTripAes192() {
-        val content = "AES-192 content"
-        val password = "testpass"
-
-        val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray(), aesStrength = AesStrength.AES_192)
-        zos.putNextEntry(ZipEntry("aes192.txt"))
-        zos.write(content.encodeToByteArray())
-        zos.closeEntry()
-        zos.close()
-
-        val zis = ZipInputStream(baos.toByteArray(), password)
-        val entry = zis.nextEntry
-        assertNotNull(entry)
-        assertEquals(content, readEntryContent(zis))
+        assertEquals(content, zis.readBytes().decodeToString())
         zis.close()
     }
 
@@ -287,7 +260,7 @@ class AesZipTest {
         val password = "testpass"
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray())
+        val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         zos.putNextEntry(ZipEntry("empty.txt"))
         zos.closeEntry()
         zos.close()
@@ -302,49 +275,14 @@ class AesZipTest {
     }
 
     @Test
-    fun roundTripStringPassword() {
-        val content = "String password test"
-        val password = "mypassword"
-
-        val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password)
-        zos.putNextEntry(ZipEntry("test.txt"))
-        zos.write(content.encodeToByteArray())
-        zos.closeEntry()
-        zos.close()
-
-        val zis = ZipInputStream(baos.toByteArray(), password)
-        val entry = zis.nextEntry
-        assertNotNull(entry)
-        assertEquals(content, readEntryContent(zis))
-        zis.close()
-    }
-
-    @Test
-    fun roundTripWrongPasswordFails() {
-        val content = "Secret data"
-
-        val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, "correctpassword".encodeToByteArray())
-        zos.putNextEntry(ZipEntry("secret.txt"))
-        zos.write(content.encodeToByteArray())
-        zos.closeEntry()
-        zos.close()
-
-        val zis = ZipInputStream(baos.toByteArray(), "wrongpassword")
-        assertNull(zis.nextEntry)
-        zis.close()
-    }
-
-    @Test
     fun roundTripWriteInChunks() {
         val password = "testpass"
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray())
+        val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         zos.putNextEntry(ZipEntry("chunked.txt"))
         zos.write("Hello, ".encodeToByteArray())
-        zos.write("encrypted ".encodeToByteArray())
+        zos.write("legacy ".encodeToByteArray())
         zos.write("world!".encodeToByteArray())
         zos.closeEntry()
         zos.close()
@@ -352,7 +290,7 @@ class AesZipTest {
         val zis = ZipInputStream(baos.toByteArray(), password)
         val entry = zis.nextEntry
         assertNotNull(entry)
-        assertEquals("Hello, encrypted world!", readEntryContent(zis))
+        assertEquals("Hello, legacy world!", zis.readBytes().decodeToString())
         zis.close()
     }
 
@@ -362,7 +300,7 @@ class AesZipTest {
         val text = "ABC"
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray())
+        val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         zos.putNextEntry(ZipEntry("single.txt"))
         for (b in text.encodeToByteArray()) {
             zos.write(b.toInt() and 0xFF)
@@ -374,7 +312,6 @@ class AesZipTest {
         val entry = zis.nextEntry
         assertNotNull(entry)
 
-        // Read single bytes
         val bytes = mutableListOf<Byte>()
         while (true) {
             val b = zis.read()
@@ -390,10 +327,9 @@ class AesZipTest {
         val password = "testpass"
 
         val baos = ByteArrayOutputStream()
-        val zos = ZipOutputStream(baos, password.encodeToByteArray())
+        val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         zos.putNextEntry(ZipEntry("first.txt"))
         zos.write("First".encodeToByteArray())
-        // Don't explicitly closeEntry - putNextEntry should handle it
         zos.putNextEntry(ZipEntry("second.txt"))
         zos.write("Second".encodeToByteArray())
         zos.closeEntry()
@@ -402,11 +338,11 @@ class AesZipTest {
         val zis = ZipInputStream(baos.toByteArray(), password)
         val entry1 = zis.nextEntry
         assertNotNull(entry1)
-        assertEquals("First", readEntryContent(zis))
+        assertEquals("First", zis.readBytes().decodeToString())
 
         val entry2 = zis.nextEntry
         assertNotNull(entry2)
-        assertEquals("Second", readEntryContent(zis))
+        assertEquals("Second", zis.readBytes().decodeToString())
 
         assertNull(zis.nextEntry)
         zis.close()

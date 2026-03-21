@@ -1,8 +1,10 @@
 # kmp-zip
 
-Kotlin Multiplatform ZIP and GZIP library for JVM and iOS targets, with **AES encryption** support.
+Kotlin Multiplatform ZIP and GZIP library for JVM and iOS targets, with encryption support.
 
-Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, and `GzipOutputStream` with a common API across platforms. Supports reading and writing [WinZip AES-encrypted](https://www.winzip.com/en/support/aes-encryption/) ZIP archives (AES-128/192/256, AE-1 and AE-2 formats), compatible with 7-Zip, WinRAR, and other tools.
+Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, and `GzipOutputStream` with a common API across platforms. Supports reading and writing encrypted ZIP archives:
+- **WinZip AES** (AES-128/192/256, AE-1 and AE-2 formats) — strong encryption, compatible with 7-Zip, WinRAR, etc.
+- **PKWare traditional** (ZipCrypto) — legacy encryption compatible with all ZIP tools including macOS `zip` and Windows Explorer
 
 All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on iOS/Native.
 
@@ -57,11 +59,12 @@ kotlin {
 
 | Type | Description |
 |------|-------------|
-| `ZipInputStream(InputStream, password?)` | Reads ZIP entries — `nextEntry`, `closeEntry()`, `read()`, `readBytes()`. Pass a password (`ByteArray` or `String`) to decrypt AES-encrypted entries. |
+| `ZipInputStream(InputStream, password?)` | Reads ZIP entries — `nextEntry`, `closeEntry()`, `read()`, `readBytes()`. Pass a password (`ByteArray` or `String`) to decrypt encrypted entries (auto-detects AES or legacy). |
 | `ZipInputStream(ByteArray, password?)` | Convenience factory |
-| `ZipOutputStream(OutputStream, password?, aesStrength?)` | Writes ZIP entries — `putNextEntry()`, `closeEntry()`, `write()`, `finish()`, `setMethod()`, `setLevel()`. Pass a password to AES-encrypt all entries. |
+| `ZipOutputStream(OutputStream, password?, encryption?, aesStrength?)` | Writes ZIP entries — `putNextEntry()`, `closeEntry()`, `write()`, `finish()`, `setMethod()`, `setLevel()`. Pass a password to encrypt all entries. |
 | `ZipEntry` | Entry metadata — `name`, `size`, `compressedSize`, `crc`, `method`, `isDirectory`, `time`, `comment`, `extra` |
 | `ZipConstants` | `STORED = 0`, `DEFLATED = 8` |
+| `ZipEncryption` | `AES` (default, strong), `LEGACY` (PKWare traditional, for compatibility) |
 | `AesStrength` | `AES_128`, `AES_192`, `AES_256` (default) |
 
 ### `kmp-zip` — `no.synth.kmpzip.crypto`
@@ -70,6 +73,7 @@ kotlin {
 |------|-------------|
 | `Crypto.pbkdf2(password, salt, iterations, keyLengthBytes)` | PBKDF2 key derivation with HMAC-SHA1 |
 | `Crypto.hmacSha1(key, data)` | HMAC-SHA1 message authentication |
+| `Crypto.crc32(data)` | CRC-32 checksum (pure Kotlin, no platform dependency) |
 | `Crypto.randomBytes(size)` | Cryptographically secure random bytes |
 
 ### `kmp-zip` — `no.synth.kmpzip.gzip`
@@ -168,6 +172,21 @@ By default, entries are encrypted with AES-256 and DEFLATED compression. You can
 ZipOutputStream(buf, password = "secret", aesStrength = AesStrength.AES_128)
 ```
 
+### Create a legacy-encrypted ZIP (ZipCrypto)
+
+For maximum compatibility with older tools (macOS Finder, Windows Explorer, `unzip`):
+
+```kotlin
+val buf = ByteArrayOutputStream()
+ZipOutputStream(buf, password = "secret", encryption = ZipEncryption.LEGACY).use { zos ->
+    zos.putNextEntry(ZipEntry("hello.txt"))
+    zos.write("Hello, legacy encrypted!".encodeToByteArray())
+    zos.closeEntry()
+}
+```
+
+Reading works the same regardless of encryption method — `ZipInputStream` auto-detects AES vs legacy.
+
 ### Standalone crypto primitives
 
 The `Crypto` object provides cross-platform cryptographic primitives that can be used independently of ZIP:
@@ -186,6 +205,9 @@ val key = Crypto.pbkdf2(
 
 // HMAC-SHA1
 val mac = Crypto.hmacSha1(key, data = "message".encodeToByteArray())
+
+// CRC-32 checksum
+val checksum = Crypto.crc32("Hello".encodeToByteArray())
 
 // Secure random
 val nonce = Crypto.randomBytes(12)

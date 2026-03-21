@@ -3,13 +3,16 @@ package no.synth.kmpzip.zip
 import no.synth.kmpzip.crypto.AesExtraField
 import no.synth.kmpzip.crypto.AesStrength
 import no.synth.kmpzip.crypto.WinZipAesCipher
+import no.synth.kmpzip.crypto.ZipCrypto
 import no.synth.kmpzip.io.InputStream
 
 /**
- * Reads ZIP entries from an input stream, with optional AES decryption.
+ * Reads ZIP entries from an input stream, with optional decryption.
+ *
+ * Supports both WinZip AES encryption and PKWare traditional (legacy) encryption.
  *
  * @param input the underlying input stream
- * @param password optional password for decrypting AES-encrypted entries (as UTF-8 bytes)
+ * @param password optional password for decrypting encrypted entries (as UTF-8 bytes)
  */
 class ZipInputStream(
     private val input: InputStream,
@@ -43,6 +46,10 @@ class ZipInputStream(
     private var aesDecryptBufPos = 0
     private var aesDecryptBufLen = 0
     private var actualCompressionMethod: Int = -1
+
+    // Legacy (ZipCrypto) decryption state
+    private var legacyCipher: ZipCrypto? = null
+    private var legacyRemainingEncryptedBytes: Long = 0
 
     fun readBytes(): ByteArray {
         val chunks = mutableListOf<ByteArray>()
@@ -104,6 +111,7 @@ class ZipInputStream(
         // Determine the actual compression method
         var effectiveMethod = method
         aesCipher = null
+        legacyCipher = null
         actualCompressionMethod = method
 
         if (method == ZipConstants.AE_ENCRYPTED && isEncrypted) {
@@ -132,6 +140,34 @@ class ZipInputStream(
                 // For data descriptor entries, we'll rely on the inflater to detect end
                 aesRemainingEncryptedBytes = Long.MAX_VALUE
             }
+        } else if (isEncrypted) {
+            // Traditional PKWare encryption (ZipCrypto)
+            if (password == null) throw Exception("Password required for encrypted entry: $name")
+
+            val cipher = ZipCrypto(password)
+
+            // Read and decrypt the 12-byte encryption header
+            val header = readExact(ZipCrypto.ENCRYPTION_HEADER_SIZE)
+            cipher.decrypt(header, 0, ZipCrypto.ENCRYPTION_HEADER_SIZE)
+
+            // Verify check byte (last byte of decrypted header)
+            val checkByte = header[11].toInt() and 0xFF
+            val crcCheck = ((crc32 ushr 24) and 0xFF).toInt()
+            val timeCheck = ((dosTime ushr 8) and 0xFF).toInt()
+            if (checkByte != crcCheck && checkByte != timeCheck) {
+                throw Exception("Wrong password for entry: $name")
+            }
+
+            legacyCipher = cipher
+
+            // Track remaining encrypted data bytes (compressedSize includes the 12-byte header).
+            // Use compressedSize when available, even if data descriptor flag is set (some tools
+            // like macOS zip fill in sizes AND set the data descriptor flag).
+            legacyRemainingEncryptedBytes = if (compressedSize > 0) {
+                compressedSize - ZipCrypto.ENCRYPTION_HEADER_SIZE
+            } else {
+                Long.MAX_VALUE
+            }
         }
 
         val entry = ZipEntry(
@@ -149,16 +185,23 @@ class ZipInputStream(
 
         when (effectiveMethod) {
             ZipConstants.STORED -> {
-                if (aesCipher != null) {
-                    remainingBytes = if (aesRemainingEncryptedBytes != Long.MAX_VALUE) {
+                remainingBytes = if (aesCipher != null) {
+                    if (aesRemainingEncryptedBytes != Long.MAX_VALUE) {
                         aesRemainingEncryptedBytes
                     } else if (!hasDataDescriptor) {
                         uncompressedSize
                     } else {
                         Long.MAX_VALUE
                     }
+                } else if (legacyCipher != null) {
+                    // Compressed size includes 12-byte encryption header (already consumed)
+                    if (!hasDataDescriptor && compressedSize > 0) {
+                        compressedSize - ZipCrypto.ENCRYPTION_HEADER_SIZE
+                    } else {
+                        uncompressedSize
+                    }
                 } else {
-                    remainingBytes = if (hasDataDescriptor) Long.MAX_VALUE else compressedSize
+                    if (hasDataDescriptor) Long.MAX_VALUE else compressedSize
                 }
             }
             ZipConstants.DEFLATED -> {
@@ -203,7 +246,7 @@ class ZipInputStream(
             return -1
         }
 
-        if (hasDataDescriptor && aesCipher == null) {
+        if (hasDataDescriptor && aesCipher == null && legacyCipher == null) {
             val n = readRaw(b, off, len)
             if (n == -1) {
                 finishEntry()
@@ -218,29 +261,21 @@ class ZipInputStream(
             return -1
         }
 
-        if (aesCipher != null) {
-            val n = readAndDecrypt(b, off, toRead)
-            if (n == -1) {
-                finishEntry()
-                return -1
-            }
-            remainingBytes -= n
-            if (remainingBytes <= 0) {
-                finishEntry()
-            }
-            return n
+        val n = if (aesCipher != null) {
+            readAndDecrypt(b, off, toRead)
         } else {
-            val n = readRaw(b, off, toRead)
-            if (n == -1) {
-                finishEntry()
-                return -1
-            }
-            remainingBytes -= n
-            if (remainingBytes <= 0) {
-                finishEntry()
-            }
-            return n
+            readRaw(b, off, toRead)
         }
+        if (n == -1) {
+            finishEntry()
+            return -1
+        }
+        legacyCipher?.decrypt(b, off, n)
+        remainingBytes -= n
+        if (remainingBytes <= 0) {
+            finishEntry()
+        }
+        return n
     }
 
     private fun readDeflated(b: ByteArray, off: Int, len: Int): Int {
@@ -267,15 +302,23 @@ class ZipInputStream(
                 }
             }
 
-            // Fill the inflater buffer with decrypted data (if AES) or raw data
+            // Fill the inflater buffer — decrypt if needed
             val n = if (aesCipher != null) {
                 readAndDecryptToInflaterBuf()
+            } else if (legacyCipher != null) {
+                readAndDecryptLegacyToInflaterBuf()
             } else {
                 readRaw(inflaterBuf, 0, inflaterBuf.size)
             }
             if (n == -1) {
+                // No more input — try one final inflate to flush the inflater's internal state
+                val result = inf.inflate(ByteArray(0), 0, 0, b, off, len)
+                if (result.bytesProduced > 0) {
+                    if (result.streamEnd) finishEntry()
+                    return result.bytesProduced
+                }
                 finishEntry()
-                return -1
+                return if (result.streamEnd) -1 else -1
             }
             inflaterBufPos = 0
             inflaterBufLen = n
@@ -303,6 +346,25 @@ class ZipInputStream(
         return n
     }
 
+    /** Read legacy-encrypted bytes, decrypt, and place into inflater buffer. */
+    private fun readAndDecryptLegacyToInflaterBuf(): Int {
+        val cipher = legacyCipher ?: return readRaw(inflaterBuf, 0, inflaterBuf.size)
+        val toRead = if (legacyRemainingEncryptedBytes != Long.MAX_VALUE) {
+            minOf(inflaterBuf.size.toLong(), legacyRemainingEncryptedBytes).toInt()
+        } else {
+            inflaterBuf.size
+        }
+        if (toRead <= 0) return -1
+
+        val n = readRaw(inflaterBuf, 0, toRead)
+        if (n == -1) return -1
+        cipher.decrypt(inflaterBuf, 0, n)
+        if (legacyRemainingEncryptedBytes != Long.MAX_VALUE) {
+            legacyRemainingEncryptedBytes -= n
+        }
+        return n
+    }
+
     /** Read and decrypt bytes directly into the output buffer. */
     private fun readAndDecrypt(b: ByteArray, off: Int, len: Int): Int {
         val cipher = aesCipher ?: return readRaw(b, off, len)
@@ -319,9 +381,8 @@ class ZipInputStream(
 
         // Save unconsumed inflater buffer bytes to pushback
         if (inflater != null && inflaterBufPos < inflaterBufLen) {
-            // For AES entries, these bytes are already decrypted and belong to the inflater
-            // Don't push them back to the raw stream
-            if (aesCipher == null) {
+            // For encrypted entries, bytes are already decrypted — don't push back
+            if (aesCipher == null && legacyCipher == null) {
                 val remaining = inflaterBufLen - inflaterBufPos
                 pushbackBuf = inflaterBuf.copyOfRange(inflaterBufPos, inflaterBufLen)
                 pushbackPos = 0
@@ -333,10 +394,11 @@ class ZipInputStream(
         inflater = null
 
         // Verify AES authentication code
-        if (aesCipher != null) {
+        val aes = aesCipher
+        if (aes != null) {
             try {
                 val expectedAuthCode = readExact(WinZipAesCipher.AUTH_CODE_LENGTH)
-                val actualAuthCode = aesCipher!!.getAuthCode()
+                val actualAuthCode = aes.getAuthCode()
                 if (!constantTimeEquals(actualAuthCode, expectedAuthCode)) {
                     throw Exception("AES authentication failed — data may be corrupted")
                 }
@@ -344,6 +406,8 @@ class ZipInputStream(
                 aesCipher = null
             }
         }
+
+        legacyCipher = null
 
         if (hasDataDescriptor) {
             readDataDescriptor()

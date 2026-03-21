@@ -3,20 +3,33 @@ package no.synth.kmpzip.zip
 import no.synth.kmpzip.crypto.AesExtraField
 import no.synth.kmpzip.crypto.AesStrength
 import no.synth.kmpzip.crypto.WinZipAesCipher
+import no.synth.kmpzip.crypto.ZipCrypto
 import no.synth.kmpzip.crypto.secureRandomBytes
 import no.synth.kmpzip.io.OutputStream
 
 /**
- * Writes ZIP entries to an output stream, with optional AES encryption.
+ * Encryption method for ZIP output.
+ */
+enum class ZipEncryption {
+    /** WinZip AES encryption (strong, recommended). */
+    AES,
+    /** PKWare traditional encryption (weak, for compatibility). */
+    LEGACY,
+}
+
+/**
+ * Writes ZIP entries to an output stream, with optional encryption.
  *
  * @param output the underlying output stream
- * @param password optional password for AES encryption (as UTF-8 bytes)
- * @param aesStrength AES key strength for encryption (default: AES-256)
+ * @param password optional password for encryption (as UTF-8 bytes)
+ * @param encryption encryption method: [ZipEncryption.AES] (default) or [ZipEncryption.LEGACY]
+ * @param aesStrength AES key strength (default: AES-256, only applies when encryption is AES)
  * @param aesVersion AES version: 1 (AE-1, writes CRC) or 2 (AE-2, CRC=0)
  */
 class ZipOutputStream(
     private val output: OutputStream,
     private val password: ByteArray? = null,
+    private val encryption: ZipEncryption = ZipEncryption.AES,
     private val aesStrength: AesStrength = AesStrength.AES_256,
     private val aesVersion: Int = 2,
 ) : OutputStream() {
@@ -39,11 +52,16 @@ class ZipOutputStream(
     private var deflater: PlatformDeflater? = null
     private val deflateBuf = ByteArray(8192)
 
-    // AES encryption state — for encrypted entries we buffer compressed data
+    // AES encryption state
     private var aesCipher: WinZipAesCipher? = null
     private var aesSalt: ByteArray? = null
-    private var aesActualMethod: Int = -1
+
+    // Buffering state — used by AES and legacy DEFLATED entries that buffer compressed data
+    private var bufferedMethod: Int = -1 // actual compression method (STORED/DEFLATED) for buffered entries
     private var compressedBuffer: MutableList<ByteArray>? = null
+
+    // Legacy (ZipCrypto) encryption state
+    private var legacyCipher: ZipCrypto? = null
 
     private class EntryInfo(
         val entry: ZipEntry,
@@ -86,9 +104,9 @@ class ZipOutputStream(
 
         val isEncrypted = password != null
 
-        if (isEncrypted) {
+        if (isEncrypted && encryption == ZipEncryption.AES) {
             // AES encrypted entry: buffer compressed data so we know size for header
-            aesActualMethod = method
+            bufferedMethod = method
             val salt = secureRandomBytes(aesStrength.saltLength)
             aesSalt = salt
             val cipher = WinZipAesCipher(password, salt, aesStrength)
@@ -100,6 +118,31 @@ class ZipOutputStream(
             }
 
             // Don't write header yet — we'll write everything at closeEntry()
+        } else if (isEncrypted && encryption == ZipEncryption.LEGACY) {
+            // Legacy (ZipCrypto) encrypted entry
+            if (method == ZipConstants.DEFLATED) {
+                // Buffer deflated data so we can write sizes in the header
+                deflater = PlatformDeflater().also { it.init(level) }
+                compressedBuffer = mutableListOf()
+                bufferedMethod = method // reuse field to track actual method
+            } else {
+                // STORED: stream directly (sizes known upfront)
+                // Adjust compressedSize to include 12-byte encryption header
+                entry.compressedSize = entry.compressedSize + ZipCrypto.ENCRYPTION_HEADER_SIZE
+                val flag = 0x01
+                writeLocalFileHeader(entry, method, flag, ZipConstants.VERSION_DEFAULT)
+
+                val cipher = ZipCrypto(password)
+                val checkByte = if (entry.crc != -1L) {
+                    ((entry.crc ushr 24) and 0xFF).toInt()
+                } else {
+                    ((entry.time ushr 8) and 0xFF).toInt()
+                }
+                val encHeader = ZipCrypto.createEncryptionHeader(cipher, checkByte)
+                writeRaw(encHeader, 0, encHeader.size)
+                entryCompressedSize += ZipCrypto.ENCRYPTION_HEADER_SIZE
+                legacyCipher = cipher
+            }
         } else {
             // Non-encrypted: write header immediately, streaming mode
             val flag = when (method) {
@@ -163,7 +206,7 @@ class ZipOutputStream(
         entryCrc.update(b, off, len)
         entryUncompressedSize += len
 
-        val method = if (aesCipher != null) aesActualMethod else entry.method
+        val method = if (aesCipher != null) bufferedMethod else entry.method
         when (method) {
             ZipConstants.STORED -> {
                 emitCompressed(b, off, len)
@@ -198,6 +241,8 @@ class ZipOutputStream(
 
         if (aesCipher != null) {
             closeEncryptedEntry(entry)
+        } else if (compressedBuffer != null && legacyCipher == null && password != null && encryption == ZipEncryption.LEGACY) {
+            closeLegacyBufferedEntry(entry)
         } else {
             closeNonEncryptedEntry(entry)
         }
@@ -207,11 +252,66 @@ class ZipOutputStream(
         currentEntry = null
     }
 
-    /** Emit compressed bytes: buffer for encrypted entries, write directly for plain. */
+    /** Finish deflation (if needed) and collect all buffered data. */
+    private fun finishAndCollectBufferedData(): ByteArray {
+        if (bufferedMethod == ZipConstants.DEFLATED) {
+            finishDeflate()
+        }
+        val data = collectBufferedData()
+        compressedBuffer = null
+        return data
+    }
+
+    private fun closeLegacyBufferedEntry(entry: ZipEntry) {
+        val compressedData = finishAndCollectBufferedData()
+        val crc = entryCrc.getValue()
+
+        // Initialize cipher with CRC check byte for verification
+        val cipher = ZipCrypto(checkNotNull(password))
+        val checkByte = ((crc ushr 24) and 0xFF).toInt()
+        val encHeader = ZipCrypto.createEncryptionHeader(cipher, checkByte)
+
+        // Encrypt the compressed data
+        val encryptedData = compressedData.clone()
+        cipher.encrypt(encryptedData, 0, encryptedData.size)
+
+        val totalCompressedSize = (ZipCrypto.ENCRYPTION_HEADER_SIZE + encryptedData.size).toLong()
+
+        // Write local header with known sizes
+        entry.crc = crc
+        entry.compressedSize = totalCompressedSize
+        entry.size = entryUncompressedSize
+        val flag = 0x01 // encrypted, no data descriptor
+        writeLocalFileHeader(entry, entry.method, flag, ZipConstants.VERSION_DEFAULT)
+
+        // Write encryption header + encrypted data
+        writeRaw(encHeader, 0, encHeader.size)
+        writeRaw(encryptedData, 0, encryptedData.size)
+
+        entries.add(
+            EntryInfo(
+                entry = entry,
+                offset = entryOffset,
+                crc = crc,
+                compressedSize = totalCompressedSize,
+                uncompressedSize = entryUncompressedSize,
+                flag = flag,
+                headerMethod = entry.method,
+                versionNeeded = ZipConstants.VERSION_DEFAULT,
+            )
+        )
+    }
+
+    /** Emit compressed bytes: buffer for AES/legacy-DEFLATED, encrypt-and-write for legacy-STORED, or write directly. */
     private fun emitCompressed(b: ByteArray, off: Int, len: Int) {
         val buf = compressedBuffer
+        val cipher = legacyCipher
         if (buf != null) {
             buf.add(b.copyOfRange(off, off + len))
+        } else if (cipher != null) {
+            val encrypted = b.copyOfRange(off, off + len)
+            cipher.encrypt(encrypted, 0, encrypted.size)
+            writeRaw(encrypted, 0, encrypted.size)
         } else {
             writeRaw(b, off, len)
         }
@@ -223,7 +323,10 @@ class ZipOutputStream(
         }
 
         val crc = entryCrc.getValue()
-        val flag = if (entry.method == ZipConstants.DEFLATED) 0x08 else 0
+        val isLegacy = legacyCipher != null
+        legacyCipher = null
+        val encryptFlag = if (isLegacy) 0x01 else 0
+        val flag = encryptFlag or (if (entry.method == ZipConstants.DEFLATED) 0x08 else 0)
 
         entries.add(
             EntryInfo(
@@ -248,19 +351,11 @@ class ZipOutputStream(
     }
 
     private fun closeEncryptedEntry(entry: ZipEntry) {
-        val cipher = aesCipher!!
-        val salt = aesSalt!!
+        val cipher = checkNotNull(aesCipher)
+        val salt = checkNotNull(aesSalt)
 
-        // Finish deflation if needed
-        if (aesActualMethod == ZipConstants.DEFLATED) {
-            finishDeflate()
-        }
-
+        val compressedData = finishAndCollectBufferedData()
         val crc = entryCrc.getValue()
-
-        // Collect all compressed data
-        val compressedData = collectBufferedData()
-        compressedBuffer = null
 
         // Encrypt the compressed data
         val encryptedData = ByteArray(compressedData.size)
@@ -275,7 +370,7 @@ class ZipOutputStream(
         val aesExtra = AesExtraField.create(
             version = aesVersion,
             strength = aesStrength,
-            actualCompressionMethod = aesActualMethod,
+            actualCompressionMethod = bufferedMethod,
         )
 
         // Merge AES extra field with any existing extra data
@@ -460,7 +555,12 @@ class ZipOutputStream(
     }
 }
 
-/** Convenience constructor with string password. */
+/** Convenience constructor with string password (AES encryption). */
 fun ZipOutputStream(output: OutputStream, password: String, aesStrength: AesStrength = AesStrength.AES_256): ZipOutputStream {
-    return ZipOutputStream(output, password.encodeToByteArray(), aesStrength)
+    return ZipOutputStream(output, password.encodeToByteArray(), aesStrength = aesStrength)
+}
+
+/** Convenience constructor with string password and explicit encryption method. */
+fun ZipOutputStream(output: OutputStream, password: String, encryption: ZipEncryption): ZipOutputStream {
+    return ZipOutputStream(output, password.encodeToByteArray(), encryption = encryption)
 }

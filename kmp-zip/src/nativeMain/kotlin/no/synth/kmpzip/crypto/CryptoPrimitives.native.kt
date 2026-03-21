@@ -45,22 +45,24 @@ internal actual class HmacSha1Engine actual constructor(key: ByteArray) {
     private var finalized = false
 
     init {
+        val ctx = checkNotNull(context)
         key.usePinned { keyPinned ->
-            CCHmacInit(context!!.ptr, kCCHmacAlgSHA1, keyPinned.addressOf(0), key.size.toULong())
+            CCHmacInit(ctx.ptr, kCCHmacAlgSHA1, keyPinned.addressOf(0), key.size.toULong())
         }
     }
 
     actual fun update(data: ByteArray, offset: Int, len: Int) {
         check(!finalized) { "HmacSha1Engine already finalized" }
         if (len == 0) return
+        val ctx = checkNotNull(context)
         data.usePinned { pinned ->
-            CCHmacUpdate(context!!.ptr, pinned.addressOf(offset), len.toULong())
+            CCHmacUpdate(ctx.ptr, pinned.addressOf(offset), len.toULong())
         }
     }
 
     actual fun doFinal(): ByteArray {
         check(!finalized) { "HmacSha1Engine already finalized" }
-        val ctx = context!!
+        val ctx = checkNotNull(context)
         val result = ByteArray(CC_SHA1_DIGEST_LENGTH.toInt())
         result.usePinned { pinned ->
             CCHmacFinal(ctx.ptr, pinned.addressOf(0))
