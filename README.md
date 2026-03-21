@@ -30,13 +30,13 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:0.8.0")
+                implementation("no.synth:kmp-zip:0.9.0")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:0.8.0")
+                implementation("no.synth:kmp-zip-kotlinx:0.9.0")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:0.8.0")
+                implementation("no.synth:kmp-zip-okio:0.9.0")
             }
         }
     }
@@ -371,8 +371,8 @@ Requires JDK 21 and Xcode (for iOS targets).
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v0.8.0
-git push origin v0.8.0
+git tag v0.9.0
+git push origin v0.9.0
 ```
 
 ## License
