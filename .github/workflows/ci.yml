@@ -19,7 +19,7 @@ jobs:
           distribution: temurin
           java-version: 21
       - uses: gradle/actions/setup-gradle@v5
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ~/.konan
           key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
@@ -28,12 +28,12 @@ jobs:
       - run: ./gradlew jvmTest
       - run: ./gradlew iosSimulatorArm64Test
       - run: ./gradlew publishToMavenLocal
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-reports
           path: "**/build/reports/tests/"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: maven-artifacts
           path: ~/.m2/repository/no/synth/
