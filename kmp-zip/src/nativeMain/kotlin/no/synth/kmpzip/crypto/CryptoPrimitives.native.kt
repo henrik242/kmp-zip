@@ -18,7 +18,7 @@ internal actual fun aesEcbEncryptBlock(key: ByteArray, block: ByteArray): ByteAr
                     val status = CCCrypt(
                         kCCEncrypt,
                         kCCAlgorithmAES128,
-                        kCCOptionECBMode.toUInt(),
+                        kCCOptionECBMode,
                         keyPinned.addressOf(0),
                         key.size.toULong(),
                         null,
@@ -28,7 +28,7 @@ internal actual fun aesEcbEncryptBlock(key: ByteArray, block: ByteArray): ByteAr
                         output.size.toULong(),
                         outMovedPtr.ptr,
                     )
-                    if (status != kCCSuccess.toInt()) {
+                    if (status != kCCSuccess) {
                         throw Exception("CCCrypt AES-ECB encrypt failed: $status")
                     }
                     dataOutMoved = outMovedPtr.value
@@ -63,7 +63,7 @@ internal actual class HmacSha1Engine actual constructor(key: ByteArray) {
     actual fun doFinal(): ByteArray {
         check(!finalized) { "HmacSha1Engine already finalized" }
         val ctx = checkNotNull(context)
-        val result = ByteArray(CC_SHA1_DIGEST_LENGTH.toInt())
+        val result = ByteArray(CC_SHA1_DIGEST_LENGTH)
         result.usePinned { pinned ->
             CCHmacFinal(ctx.ptr, pinned.addressOf(0))
         }
@@ -82,23 +82,25 @@ internal actual fun pbkdf2HmacSha1(
     keyLengthBytes: Int,
 ): ByteArray {
     val derivedKey = ByteArray(keyLengthBytes)
-    password.usePinned { passPinned ->
-        salt.usePinned { saltPinned ->
-            derivedKey.usePinned { keyPinned ->
-                val status = CCKeyDerivationPBKDF(
-                    kCCPBKDF2,
-                    passPinned.addressOf(0).reinterpret(),
-                    password.size.toULong(),
-                    saltPinned.addressOf(0).reinterpret(),
-                    salt.size.toULong(),
-                    kCCPRFHmacAlgSHA1,
-                    iterations.toUInt(),
-                    keyPinned.addressOf(0).reinterpret(),
-                    keyLengthBytes.toULong(),
-                )
-                if (status != kCCSuccess.toInt()) {
-                    throw Exception("CCKeyDerivationPBKDF failed: $status")
-                }
+    // CCKeyDerivationPBKDF's `password` param is `const char *` which Kotlin/Native
+    // maps to `String?`. Decode UTF-8 bytes to String; the interop layer passes the
+    // UTF-8 representation back to C, and passwordLen limits the bytes read.
+    val passwordString = password.decodeToString()
+    salt.usePinned { saltPinned ->
+        derivedKey.usePinned { keyPinned ->
+            val status = CCKeyDerivationPBKDF(
+                kCCPBKDF2,
+                passwordString,
+                password.size.toULong(),
+                saltPinned.addressOf(0).reinterpret<UByteVar>(),
+                salt.size.toULong(),
+                kCCPRFHmacAlgSHA1,
+                iterations.toUInt(),
+                keyPinned.addressOf(0).reinterpret<UByteVar>(),
+                keyLengthBytes.toULong(),
+            )
+            if (status != kCCSuccess) {
+                throw Exception("CCKeyDerivationPBKDF failed: $status")
             }
         }
     }

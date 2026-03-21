@@ -272,7 +272,7 @@ class ZipOutputStream(
         val encHeader = ZipCrypto.createEncryptionHeader(cipher, checkByte)
 
         // Encrypt the compressed data
-        val encryptedData = compressedData.clone()
+        val encryptedData = compressedData.copyOf()
         cipher.encrypt(encryptedData, 0, encryptedData.size)
 
         val totalCompressedSize = (ZipCrypto.ENCRYPTION_HEADER_SIZE + encryptedData.size).toLong()
