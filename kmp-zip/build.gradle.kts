@@ -39,6 +39,11 @@ kotlin {
                 implementation(kotlin("test"))
             }
         }
+        jvmTest {
+            dependencies {
+                implementation(libs.zip4j)
+            }
+        }
         nativeTest {
             kotlin.srcDir(
                 generateNativeTestData.map {

@@ -139,9 +139,10 @@ class ZipInputStream(
             } else {
                 // Data descriptor entry with unknown size: scan ahead to find the
                 // data descriptor and determine the actual compressed size.
-                val resolved = resolveDataDescriptorCompressedSize(aesField.strength.saltLength)
+                val aesPrefixLength = aesField.strength.saltLength + 2 // salt + PVV
+                val resolved = resolveDataDescriptorCompressedSize(aesPrefixLength)
                 aesRemainingEncryptedBytes =
-                    resolved - aesField.strength.saltLength - 2 - WinZipAesCipher.AUTH_CODE_LENGTH
+                    resolved - aesPrefixLength - WinZipAesCipher.AUTH_CODE_LENGTH
             }
         } else if (isEncrypted) {
             // Traditional PKWare encryption (ZipCrypto)
@@ -169,7 +170,8 @@ class ZipInputStream(
             legacyRemainingEncryptedBytes = if (compressedSize > 0) {
                 compressedSize - ZipCrypto.ENCRYPTION_HEADER_SIZE
             } else {
-                Long.MAX_VALUE
+                val resolved = resolveDataDescriptorCompressedSize(ZipCrypto.ENCRYPTION_HEADER_SIZE)
+                resolved - ZipCrypto.ENCRYPTION_HEADER_SIZE
             }
         }
 
@@ -522,7 +524,7 @@ class ZipInputStream(
     }
 
     /**
-     * For AES entries with data descriptor (compressedSize=0 in local header),
+     * For encrypted entries with data descriptor (compressedSize=0 in local header),
      * reads stream data incrementally to locate the data descriptor and determine
      * the actual compressed size. Stops reading as soon as the descriptor is found,
      * avoiding buffering the entire stream for multi-entry zips. All buffered data
@@ -531,17 +533,19 @@ class ZipInputStream(
      * Memory usage is proportional to the current entry's compressed data, not the
      * entire zip file.
      *
-     * @param saltLength the salt length for the AES key strength
+     * @param consumedPrefixLength bytes already consumed from the entry's compressed data
+     *   before this method is called (e.g. salt+PVV for AES, or encryption header for legacy).
+     *   The data descriptor's compressedSize = consumedPrefixLength + position_in_buffer.
      * @return the compressed size from the data descriptor
      * @throws Exception if the data descriptor cannot be found
      */
-    private fun resolveDataDescriptorCompressedSize(saltLength: Int): Long {
+    private fun resolveDataDescriptorCompressedSize(consumedPrefixLength: Int): Long {
         // Read into a growing buffer, scanning for the data descriptor after each
         // chunk. This stops as soon as the descriptor is found, so for multi-entry
         // zips we only buffer the current entry's data (not subsequent entries).
         var buf = ByteArray(8192)
         var size = 0
-        val saltPvvLen = (saltLength + 2).toLong()
+        val prefixLen = consumedPrefixLength.toLong()
 
         while (true) {
             if (size >= buf.size) {
@@ -561,7 +565,7 @@ class ZipInputStream(
                     buf[i + 2] == 0x07.toByte() && buf[i + 3] == 0x08.toByte()
                 ) {
                     val cs = readLeUIntFromArray(buf, i + 8)
-                    if (cs == saltPvvLen + i.toLong()) {
+                    if (cs == prefixLen + i.toLong()) {
                         pushbackBuf = if (size == buf.size) buf else buf.copyOf(size)
                         pushbackPos = 0
                         pushbackLen = size
@@ -588,7 +592,7 @@ class ZipInputStream(
                 if (isLocalHeader || isCentralDir) {
                     val ddStart = i - 12
                     val cs = readLeUIntFromArray(data, ddStart + 4)
-                    if (cs == saltPvvLen + ddStart.toLong()) {
+                    if (cs == prefixLen + ddStart.toLong()) {
                         pushbackBuf = data
                         pushbackPos = 0
                         pushbackLen = size
