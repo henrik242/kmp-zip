@@ -1,4 +1,4 @@
-# kmp-zip
+ kmp-zip
 
 Kotlin Multiplatform ZIP and GZIP library for JVM and iOS targets, with encryption support.
 
@@ -30,13 +30,13 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:0.9.0")
+                implementation("no.synth:kmp-zip:0.9.1")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:0.9.0")
+                implementation("no.synth:kmp-zip-kotlinx:0.9.1")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:0.9.0")
+                implementation("no.synth:kmp-zip-okio:0.9.1")
             }
         }
     }
