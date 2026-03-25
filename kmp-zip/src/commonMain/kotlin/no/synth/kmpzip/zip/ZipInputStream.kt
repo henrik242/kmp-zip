@@ -417,6 +417,10 @@ class ZipInputStream(
         }
     }
 
+    // Note: ZIP64 data descriptors use 8-byte sizes (per APPNOTE.TXT 4.3.9.3),
+    // but are only triggered when the local header has sizes = 0xFFFFFFFF. Since this
+    // library does not support ZIP64, such entries would already fail earlier. This
+    // method assumes standard 4-byte sizes.
     private fun readDataDescriptor() {
         val possibleSig = readLeInt()
         if (possibleSig == ZipConstants.DATA_DESCRIPTOR_SIGNATURE) {
@@ -519,59 +523,63 @@ class ZipInputStream(
 
     /**
      * For AES entries with data descriptor (compressedSize=0 in local header),
-     * pre-buffers remaining stream data to locate the data descriptor and determine
-     * the actual compressed size. All buffered data is pushed back so subsequent
-     * reads consume it normally.
+     * reads stream data incrementally to locate the data descriptor and determine
+     * the actual compressed size. Stops reading as soon as the descriptor is found,
+     * avoiding buffering the entire stream for multi-entry zips. All buffered data
+     * is pushed back so subsequent reads consume it normally.
      *
-     * Note: this buffers the entire remaining stream, so memory usage is proportional
-     * to the remaining zip file size. This is acceptable for the common case where
-     * ZipInputStream wraps a ByteArrayInputStream, but may be costly for very large
-     * file-backed streams.
+     * Memory usage is proportional to the current entry's compressed data, not the
+     * entire zip file.
      *
      * @param saltLength the salt length for the AES key strength
      * @return the compressed size from the data descriptor
      * @throws Exception if the data descriptor cannot be found
      */
     private fun resolveDataDescriptorCompressedSize(saltLength: Int): Long {
-        val buffer = no.synth.kmpzip.io.ByteArrayOutputStream()
-        val readBuf = ByteArray(4096)
-
-        while (true) {
-            val n = readRaw(readBuf, 0, readBuf.size)
-            if (n == -1) break
-            buffer.write(readBuf, 0, n)
-        }
-
-        val data = buffer.toByteArray()
-        if (data.isEmpty()) {
-            throw Exception("Unexpected end of stream in AES entry with data descriptor")
-        }
-
-        // Salt and PVV were already consumed before this method was called.
-        // Buffer contains: [encrypted data][auth code (10)][data descriptor][rest of zip...]
-        // The data descriptor's compressedSize = saltLength + 2 (PVV) + position_in_buffer
+        // Read into a growing buffer, scanning for the data descriptor after each
+        // chunk. This stops as soon as the descriptor is found, so for multi-entry
+        // zips we only buffer the current entry's data (not subsequent entries).
+        var buf = ByteArray(8192)
+        var size = 0
         val saltPvvLen = (saltLength + 2).toLong()
 
-        // Primary: scan for data descriptor signature PK\x07\x08
-        // Need 12 bytes from position i: 4 (sig) + 4 (CRC) + 4 (compressedSize)
-        for (i in 0..data.size - 12) {
-            if (data[i] == 0x50.toByte() && data[i + 1] == 0x4b.toByte() &&
-                data[i + 2] == 0x07.toByte() && data[i + 3] == 0x08.toByte()
-            ) {
-                val cs = readLeUIntFromArray(data, i + 8)
-                if (cs == saltPvvLen + i.toLong()) {
-                    pushbackBuf = data
-                    pushbackPos = 0
-                    pushbackLen = data.size
-                    return cs
+        while (true) {
+            if (size >= buf.size) {
+                buf = buf.copyOf(buf.size * 2)
+            }
+            val n = readRaw(buf, size, minOf(4096, buf.size - size))
+            if (n == -1) break
+
+            // Scan newly available data, re-checking last 11 bytes for cross-chunk matches
+            val scanStart = maxOf(0, size - 11)
+            size += n
+
+            // Primary: scan for data descriptor signature PK\x07\x08
+            // Need 12 bytes from position i: 4 (sig) + 4 (CRC) + 4 (compressedSize)
+            for (i in scanStart..size - 12) {
+                if (buf[i] == 0x50.toByte() && buf[i + 1] == 0x4b.toByte() &&
+                    buf[i + 2] == 0x07.toByte() && buf[i + 3] == 0x08.toByte()
+                ) {
+                    val cs = readLeUIntFromArray(buf, i + 8)
+                    if (cs == saltPvvLen + i.toLong()) {
+                        pushbackBuf = if (size == buf.size) buf else buf.copyOf(size)
+                        pushbackPos = 0
+                        pushbackLen = size
+                        return cs
+                    }
                 }
             }
         }
 
-        // Fallback: look for next entry/central directory header and infer
-        // data descriptor (without signature) from the 12 bytes preceding it.
+        if (size == 0) {
+            throw Exception("Unexpected end of stream in AES entry with data descriptor")
+        }
+
+        // Fallback: scan all buffered data for next entry/central directory header and
+        // infer data descriptor (without signature) from the 12 bytes preceding it.
         // Layout: [encrypted data][auth code (10)][CRC(4)|compressedSize(4)|uncompressedSize(4)][PK header]
-        for (i in 12..data.size - 4) {
+        val data = if (size == buf.size) buf else buf.copyOf(size)
+        for (i in 12..size - 4) {
             if (data[i] == 0x50.toByte() && data[i + 1] == 0x4b.toByte()) {
                 val sig3 = data[i + 2].toInt() and 0xFF
                 val sig4 = data[i + 3].toInt() and 0xFF
@@ -583,7 +591,7 @@ class ZipInputStream(
                     if (cs == saltPvvLen + ddStart.toLong()) {
                         pushbackBuf = data
                         pushbackPos = 0
-                        pushbackLen = data.size
+                        pushbackLen = size
                         return cs
                     }
                 }
@@ -593,7 +601,7 @@ class ZipInputStream(
         // Not found — push back data so stream isn't corrupted, then fail
         pushbackBuf = data
         pushbackPos = 0
-        pushbackLen = data.size
+        pushbackLen = size
         throw Exception("Cannot determine compressed size for AES entry with data descriptor")
     }
 
