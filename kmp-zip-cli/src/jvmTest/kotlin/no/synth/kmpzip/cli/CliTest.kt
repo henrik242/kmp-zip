@@ -215,18 +215,18 @@ class CliTest {
     }
 
     @Test
-    fun `gunzip alias ungzip works`() {
-        val tmpDir = createTempDir("cli-ungzip-test")
+    fun `gzip and gunzip short aliases work`() {
+        val tmpDir = createTempDir("cli-alias-test")
         try {
             val original = File(tmpDir, "data.txt")
             original.writeText("alias test data")
-            main(arrayOf("gz", original.path))
+            main(arrayOf("z", original.path))
 
             val gzFile = File("${original.path}.gz")
             assertTrue(gzFile.exists())
             original.delete()
 
-            main(arrayOf("ungzip", gzFile.path))
+            main(arrayOf("u", gzFile.path))
             assertTrue(original.exists())
             assertEquals("alias test data", original.readText())
         } finally {

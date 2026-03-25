@@ -2,6 +2,7 @@ package no.synth.kmpzip.zip
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -396,10 +397,10 @@ class ZipInputStreamTest {
     }
 
     @Test
-    fun truncatedHeaderReturnsNullEntry() {
-        // Just the PK signature without the rest of the header
+    fun truncatedHeaderThrows() {
+        // Valid signature but truncated header — should throw, not silently return null
         val zis = ZipInputStream(byteArrayOf(0x50, 0x4B, 0x03, 0x04))
-        assertNull(zis.nextEntry)
+        assertFails { zis.nextEntry }
         zis.close()
     }
 }

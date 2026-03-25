@@ -4,8 +4,10 @@ import no.synth.kmpzip.io.ByteArrayOutputStream
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class LegacyZipTest {
 
@@ -70,16 +72,18 @@ class LegacyZipTest {
     }
 
     @Test
-    fun wrongPasswordReturnsNull() {
+    fun wrongPasswordThrows() {
         val zis = ZipInputStream(TestData.legacyStoredZip, "wrongpassword")
-        assertNull(zis.nextEntry)
+        val e = assertFailsWith<ZipPasswordException> { zis.nextEntry }
+        assertTrue(e.message.orEmpty().contains("Wrong password"))
         zis.close()
     }
 
     @Test
-    fun noPasswordReturnsNull() {
+    fun noPasswordThrows() {
         val zis = ZipInputStream(TestData.legacyStoredZip)
-        assertNull(zis.nextEntry)
+        val e = assertFailsWith<ZipPasswordException> { zis.nextEntry }
+        assertTrue(e.message.orEmpty().contains("Password required"))
         zis.close()
     }
 
@@ -214,25 +218,32 @@ class LegacyZipTest {
     }
 
     @Test
-    fun roundTripWrongPasswordFails() {
-        val content = "Secret data"
-
+    fun wrongPasswordThrowsZipPasswordException() {
         val baos = ByteArrayOutputStream()
         val zos = ZipOutputStream(baos, "correctpassword".encodeToByteArray(), encryption = ZipEncryption.LEGACY)
         zos.putNextEntry(ZipEntry("secret.txt"))
-        zos.write(content.encodeToByteArray())
+        zos.write("Secret data".encodeToByteArray())
         zos.closeEntry()
         zos.close()
 
         val zis = ZipInputStream(baos.toByteArray(), "wrongpassword")
-        // Wrong password may fail at header check or produce garbage
-        val entry = zis.nextEntry
-        // Either null (check byte failed) or entry with corrupted data
-        if (entry != null) {
-            val data = zis.readBytes().decodeToString()
-            // Data should not match original
-            assertEquals(false, data == content)
-        }
+        val e = assertFailsWith<ZipPasswordException> { zis.nextEntry }
+        assertTrue(e.message.orEmpty().contains("Wrong password"))
+        zis.close()
+    }
+
+    @Test
+    fun missingPasswordThrowsZipPasswordException() {
+        val baos = ByteArrayOutputStream()
+        val zos = ZipOutputStream(baos, "secret".encodeToByteArray(), encryption = ZipEncryption.LEGACY)
+        zos.putNextEntry(ZipEntry("encrypted.txt"))
+        zos.write("data".encodeToByteArray())
+        zos.closeEntry()
+        zos.close()
+
+        val zis = ZipInputStream(baos.toByteArray())
+        val e = assertFailsWith<ZipPasswordException> { zis.nextEntry }
+        assertTrue(e.message.orEmpty().contains("Password required"))
         zis.close()
     }
 

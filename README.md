@@ -364,7 +364,7 @@ The `kmp-zip-cli` module provides a command-line tool for ZIP and GZIP operation
 ### Running
 
 ```sh
-./gradlew :kmp-zip-cli:jvmRun --args="<command> [options] [args]"
+./kmp-zip-cli.sh <command> [options] [args]
 ```
 
 ### Commands
@@ -374,34 +374,34 @@ The `kmp-zip-cli` module provides a command-line tool for ZIP and GZIP operation
 | `list <file.zip> [-p password]` | `l` | List ZIP contents (method, size, compressed size, name) |
 | `extract <file.zip> [-d dir] [-p password]` | `x` | Extract ZIP contents to a directory |
 | `create <file.zip> [-p password] [--legacy] <files..>` | `c` | Create ZIP from files and directories (recursive) |
-| `gzip <file>` | `gz` | GZIP compress a file (creates `<file>.gz`) |
-| `gunzip <file.gz>` | `guz`, `ungzip` | GZIP decompress a file |
+| `gzip <file>` | `z` | GZIP compress a file (creates `<file>.gz`) |
+| `gunzip <file.gz>` | `u` | GZIP decompress a file |
 | `help` | `-h`, `--help` | Show usage information |
 
 ### Examples
 
 ```sh
 # List contents of a ZIP file
-./gradlew :kmp-zip-cli:jvmRun --args="list archive.zip"
+./kmp-zip-cli.sh list archive.zip
 
 # Extract to a specific directory
-./gradlew :kmp-zip-cli:jvmRun --args="extract archive.zip -d output/"
+./kmp-zip-cli.sh extract archive.zip -d output/
 
 # Create a ZIP from files and directories
-./gradlew :kmp-zip-cli:jvmRun --args="create archive.zip file.txt src/"
+./kmp-zip-cli.sh create archive.zip file.txt src/
 
 # Create an AES-encrypted ZIP (default)
-./gradlew :kmp-zip-cli:jvmRun --args="create secret.zip -p mypassword file.txt"
+./kmp-zip-cli.sh create secret.zip -p mypassword file.txt
 
 # Create a legacy ZipCrypto-encrypted ZIP (compatible with macOS Finder, Windows Explorer)
-./gradlew :kmp-zip-cli:jvmRun --args="create compat.zip -p mypassword --legacy file.txt"
+./kmp-zip-cli.sh create compat.zip -p mypassword --legacy file.txt
 
 # Extract an encrypted ZIP (auto-detects AES or legacy)
-./gradlew :kmp-zip-cli:jvmRun --args="extract secret.zip -p mypassword -d output/"
+./kmp-zip-cli.sh extract secret.zip -p mypassword -d output/
 
 # GZIP compress / decompress
-./gradlew :kmp-zip-cli:jvmRun --args="gzip largefile.txt"
-./gradlew :kmp-zip-cli:jvmRun --args="gunzip largefile.txt.gz"
+./kmp-zip-cli.sh gzip largefile.txt
+./kmp-zip-cli.sh gunzip largefile.txt.gz
 ```
 
 ## Building

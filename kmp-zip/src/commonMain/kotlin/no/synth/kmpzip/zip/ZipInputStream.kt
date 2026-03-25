@@ -75,16 +75,19 @@ class ZipInputStream(
             if (closed) throw Exception("Stream closed")
             closeEntry()
 
-            return try {
-                readNextEntry()
+            // Read the signature separately: EOF here is normal (no more entries).
+            // All other exceptions (password, corruption, etc.) should propagate.
+            val sig = try {
+                readLeInt()
             } catch (_: Exception) {
-                null
+                return null
             }
+            if (sig != ZipConstants.LOCAL_FILE_HEADER_SIGNATURE) return null
+
+            return readNextEntry()
         }
 
     private fun readNextEntry(): ZipEntry? {
-        val sig = readLeInt()
-        if (sig != ZipConstants.LOCAL_FILE_HEADER_SIGNATURE) return null
 
         @Suppress("UNUSED_VARIABLE")
         val versionNeeded = readLeShort()
@@ -118,7 +121,7 @@ class ZipInputStream(
             val aesField = AesExtraField.parse(extra)
                 ?: throw Exception("AES encrypted entry missing AES extra field")
 
-            if (password == null) throw Exception("Password required for AES encrypted entry: $name")
+            if (password == null) throw ZipPasswordException("Password required for AES encrypted entry: $name")
 
             actualCompressionMethod = aesField.actualCompressionMethod
             effectiveMethod = aesField.actualCompressionMethod
@@ -128,7 +131,7 @@ class ZipInputStream(
 
             val cipher = WinZipAesCipher(password, salt, aesField.strength)
             if (!constantTimeEquals(cipher.passwordVerification, pvv)) {
-                throw Exception("Wrong password for entry: $name")
+                throw ZipPasswordException("Wrong password for entry: $name")
             }
             aesCipher = cipher
 
@@ -146,7 +149,7 @@ class ZipInputStream(
             }
         } else if (isEncrypted) {
             // Traditional PKWare encryption (ZipCrypto)
-            if (password == null) throw Exception("Password required for encrypted entry: $name")
+            if (password == null) throw ZipPasswordException("Password required for encrypted entry: $name")
 
             val cipher = ZipCrypto(password)
 
@@ -159,7 +162,7 @@ class ZipInputStream(
             val crcCheck = ((crc32 ushr 24) and 0xFF).toInt()
             val timeCheck = ((dosTime ushr 8) and 0xFF).toInt()
             if (checkByte != crcCheck && checkByte != timeCheck) {
-                throw Exception("Wrong password for entry: $name")
+                throw ZipPasswordException("Wrong password for entry: $name")
             }
 
             legacyCipher = cipher
@@ -644,3 +647,6 @@ fun ZipInputStream(input: InputStream, password: String): ZipInputStream {
 fun ZipInputStream(data: ByteArray, password: String): ZipInputStream {
     return ZipInputStream(no.synth.kmpzip.io.ByteArrayInputStream(data), password.encodeToByteArray())
 }
+
+/** Thrown when an encrypted entry cannot be decrypted (missing or wrong password). */
+class ZipPasswordException(message: String) : Exception(message)
