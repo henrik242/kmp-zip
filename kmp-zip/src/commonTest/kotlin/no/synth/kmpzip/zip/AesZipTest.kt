@@ -7,6 +7,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class AesZipTest {
 
@@ -87,6 +88,21 @@ class AesZipTest {
         assertEquals("second.txt", entry2.name)
         assertEquals("Second encrypted file! ".repeat(50), readEntryContent(zis))
 
+        assertNull(zis.nextEntry)
+        zis.close()
+    }
+
+    @Test
+    fun readZip4jAes256DeflatedEntry() {
+        // Zip4j uses data descriptors (bit 3) with compressedSize=0 in local header
+        val zis = ZipInputStream(TestData.zip4jAes256DeflatedZip, "123456")
+        val entry = zis.nextEntry
+        assertNotNull(entry)
+        assertEquals("digital.json", entry.name)
+        assertEquals(ZipConstants.DEFLATED, entry.method)
+        val content = readEntryContent(zis)
+        assertEquals(343, content.encodeToByteArray().size)
+        assertTrue(content.startsWith("{\"KEY_EVENTINFO\""))
         assertNull(zis.nextEntry)
         zis.close()
     }

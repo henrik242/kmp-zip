@@ -24,6 +24,9 @@ expect object TestData {
     val aes256MultiZip: ByteArray
     val aes256StoredZip: ByteArray
 
+    // AES-encrypted test ZIPs from external tools (password: "123456")
+    val zip4jAes256DeflatedZip: ByteArray
+
     // Legacy (ZipCrypto) encrypted test ZIPs (password: "password")
     val legacyStoredZip: ByteArray
     val legacyDeflatedZip: ByteArray

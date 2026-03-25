@@ -133,12 +133,15 @@ class ZipInputStream(
             aesCipher = cipher
 
             // Encrypted data size = compressedSize - salt - pvv - authCode
-            if (!hasDataDescriptor && compressedSize > 0) {
+            if (compressedSize > 0) {
                 aesRemainingEncryptedBytes = compressedSize -
                     aesField.strength.saltLength - 2 - WinZipAesCipher.AUTH_CODE_LENGTH
             } else {
-                // For data descriptor entries, we'll rely on the inflater to detect end
-                aesRemainingEncryptedBytes = Long.MAX_VALUE
+                // Data descriptor entry with unknown size: scan ahead to find the
+                // data descriptor and determine the actual compressed size.
+                val resolved = resolveDataDescriptorCompressedSize(aesField.strength.saltLength)
+                aesRemainingEncryptedBytes =
+                    resolved - aesField.strength.saltLength - 2 - WinZipAesCipher.AUTH_CODE_LENGTH
             }
         } else if (isEncrypted) {
             // Traditional PKWare encryption (ZipCrypto)
@@ -512,6 +515,94 @@ class ZipInputStream(
             offset += read
         }
         return buf
+    }
+
+    /**
+     * For AES entries with data descriptor (compressedSize=0 in local header),
+     * pre-buffers remaining stream data to locate the data descriptor and determine
+     * the actual compressed size. All buffered data is pushed back so subsequent
+     * reads consume it normally.
+     *
+     * Note: this buffers the entire remaining stream, so memory usage is proportional
+     * to the remaining zip file size. This is acceptable for the common case where
+     * ZipInputStream wraps a ByteArrayInputStream, but may be costly for very large
+     * file-backed streams.
+     *
+     * @param saltLength the salt length for the AES key strength
+     * @return the compressed size from the data descriptor
+     * @throws Exception if the data descriptor cannot be found
+     */
+    private fun resolveDataDescriptorCompressedSize(saltLength: Int): Long {
+        val buffer = no.synth.kmpzip.io.ByteArrayOutputStream()
+        val readBuf = ByteArray(4096)
+
+        while (true) {
+            val n = readRaw(readBuf, 0, readBuf.size)
+            if (n == -1) break
+            buffer.write(readBuf, 0, n)
+        }
+
+        val data = buffer.toByteArray()
+        if (data.isEmpty()) {
+            throw Exception("Unexpected end of stream in AES entry with data descriptor")
+        }
+
+        // Salt and PVV were already consumed before this method was called.
+        // Buffer contains: [encrypted data][auth code (10)][data descriptor][rest of zip...]
+        // The data descriptor's compressedSize = saltLength + 2 (PVV) + position_in_buffer
+        val saltPvvLen = (saltLength + 2).toLong()
+
+        // Primary: scan for data descriptor signature PK\x07\x08
+        // Need 12 bytes from position i: 4 (sig) + 4 (CRC) + 4 (compressedSize)
+        for (i in 0..data.size - 12) {
+            if (data[i] == 0x50.toByte() && data[i + 1] == 0x4b.toByte() &&
+                data[i + 2] == 0x07.toByte() && data[i + 3] == 0x08.toByte()
+            ) {
+                val cs = readLeUIntFromArray(data, i + 8)
+                if (cs == saltPvvLen + i.toLong()) {
+                    pushbackBuf = data
+                    pushbackPos = 0
+                    pushbackLen = data.size
+                    return cs
+                }
+            }
+        }
+
+        // Fallback: look for next entry/central directory header and infer
+        // data descriptor (without signature) from the 12 bytes preceding it.
+        // Layout: [encrypted data][auth code (10)][CRC(4)|compressedSize(4)|uncompressedSize(4)][PK header]
+        for (i in 12..data.size - 4) {
+            if (data[i] == 0x50.toByte() && data[i + 1] == 0x4b.toByte()) {
+                val sig3 = data[i + 2].toInt() and 0xFF
+                val sig4 = data[i + 3].toInt() and 0xFF
+                val isLocalHeader = sig3 == 0x03 && sig4 == 0x04
+                val isCentralDir = sig3 == 0x01 && sig4 == 0x02
+                if (isLocalHeader || isCentralDir) {
+                    val ddStart = i - 12
+                    val cs = readLeUIntFromArray(data, ddStart + 4)
+                    if (cs == saltPvvLen + ddStart.toLong()) {
+                        pushbackBuf = data
+                        pushbackPos = 0
+                        pushbackLen = data.size
+                        return cs
+                    }
+                }
+            }
+        }
+
+        // Not found — push back data so stream isn't corrupted, then fail
+        pushbackBuf = data
+        pushbackPos = 0
+        pushbackLen = data.size
+        throw Exception("Cannot determine compressed size for AES entry with data descriptor")
+    }
+
+    /** Read a 32-bit unsigned little-endian integer from a byte array as a Long. */
+    private fun readLeUIntFromArray(data: ByteArray, offset: Int): Long {
+        return ((data[offset].toInt() and 0xFF).toLong()) or
+            (((data[offset + 1].toInt() and 0xFF).toLong()) shl 8) or
+            (((data[offset + 2].toInt() and 0xFF).toLong()) shl 16) or
+            (((data[offset + 3].toInt() and 0xFF).toLong()) shl 24)
     }
 
     companion object {
