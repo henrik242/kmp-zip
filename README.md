@@ -15,6 +15,7 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 | `no.synth:kmp-zip` | Core I/O, ZIP, and GZIP streams |
 | `no.synth:kmp-zip-kotlinx` | [kotlinx-io](https://github.com/Kotlin/kotlinx-io) `Source`/`Sink` adapters (both directions) for the core streams |
 | `no.synth:kmp-zip-okio` | [OkIO](https://square.github.io/okio/) `BufferedSource`/`BufferedSink`/`Source`/`Sink` adapters (both directions) for the core streams |
+| `kmp-zip-cli` | Command-line tool for ZIP/GZIP operations (JVM, not published to Maven Central) |
 
 ## Targets
 
@@ -354,6 +355,53 @@ ZipOutputStream(sink).use { zos ->
     entrySink.flush()
     zos.closeEntry()
 }
+```
+
+## CLI
+
+The `kmp-zip-cli` module provides a command-line tool for ZIP and GZIP operations, powered by the core library.
+
+### Running
+
+```sh
+./gradlew :kmp-zip-cli:jvmRun --args="<command> [options] [args]"
+```
+
+### Commands
+
+| Command | Alias | Description |
+|---------|-------|-------------|
+| `list <file.zip> [-p password]` | `l` | List ZIP contents (method, size, compressed size, name) |
+| `extract <file.zip> [-d dir] [-p password]` | `x` | Extract ZIP contents to a directory |
+| `create <file.zip> [-p password] [--legacy] <files..>` | `c` | Create ZIP from files and directories (recursive) |
+| `gzip <file>` | `gz` | GZIP compress a file (creates `<file>.gz`) |
+| `gunzip <file.gz>` | `guz`, `ungzip` | GZIP decompress a file |
+| `help` | `-h`, `--help` | Show usage information |
+
+### Examples
+
+```sh
+# List contents of a ZIP file
+./gradlew :kmp-zip-cli:jvmRun --args="list archive.zip"
+
+# Extract to a specific directory
+./gradlew :kmp-zip-cli:jvmRun --args="extract archive.zip -d output/"
+
+# Create a ZIP from files and directories
+./gradlew :kmp-zip-cli:jvmRun --args="create archive.zip file.txt src/"
+
+# Create an AES-encrypted ZIP (default)
+./gradlew :kmp-zip-cli:jvmRun --args="create secret.zip -p mypassword file.txt"
+
+# Create a legacy ZipCrypto-encrypted ZIP (compatible with macOS Finder, Windows Explorer)
+./gradlew :kmp-zip-cli:jvmRun --args="create compat.zip -p mypassword --legacy file.txt"
+
+# Extract an encrypted ZIP (auto-detects AES or legacy)
+./gradlew :kmp-zip-cli:jvmRun --args="extract secret.zip -p mypassword -d output/"
+
+# GZIP compress / decompress
+./gradlew :kmp-zip-cli:jvmRun --args="gzip largefile.txt"
+./gradlew :kmp-zip-cli:jvmRun --args="gunzip largefile.txt.gz"
 ```
 
 ## Building
