@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+ARGS="${1:-} --cwd $(pwd) ${*:2}"
+exec "$SCRIPT_DIR/gradlew" -q :kmp-zip-cli:jvmRun --args="$ARGS"

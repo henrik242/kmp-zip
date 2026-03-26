@@ -364,7 +364,7 @@ The `kmp-zip-cli` module provides a command-line tool for ZIP and GZIP operation
 ### Running
 
 ```sh
-./kmp-zip-cli.sh <command> [options] [args]
+./kmpzip <command> [options] [args]
 ```
 
 ### Commands
@@ -382,26 +382,26 @@ The `kmp-zip-cli` module provides a command-line tool for ZIP and GZIP operation
 
 ```sh
 # List contents of a ZIP file
-./kmp-zip-cli.sh list archive.zip
+./kmpzip list archive.zip
 
 # Extract to a specific directory
-./kmp-zip-cli.sh extract archive.zip -d output/
+./kmpzip extract archive.zip -d output/
 
 # Create a ZIP from files and directories
-./kmp-zip-cli.sh create archive.zip file.txt src/
+./kmpzip create archive.zip file.txt src/
 
 # Create an AES-encrypted ZIP (default)
-./kmp-zip-cli.sh create secret.zip -p mypassword file.txt
+./kmpzip create secret.zip -p mypassword file.txt
 
 # Create a legacy ZipCrypto-encrypted ZIP (compatible with macOS Finder, Windows Explorer)
-./kmp-zip-cli.sh create compat.zip -p mypassword --legacy file.txt
+./kmpzip create compat.zip -p mypassword --legacy file.txt
 
 # Extract an encrypted ZIP (auto-detects AES or legacy)
-./kmp-zip-cli.sh extract secret.zip -p mypassword -d output/
+./kmpzip extract secret.zip -p mypassword -d output/
 
 # GZIP compress / decompress
-./kmp-zip-cli.sh gzip largefile.txt
-./kmp-zip-cli.sh gunzip largefile.txt.gz
+./kmpzip gzip largefile.txt
+./kmpzip gunzip largefile.txt.gz
 ```
 
 ## Building

@@ -11,21 +11,27 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 
 fun main(args: Array<String>) {
-    if (args.isEmpty()) {
+    // Filter out empty args (from shell wrapper when no command given)
+    val filtered = args.filter { it.isNotEmpty() }
+    val command = filtered.firstOrNull()
+    if (command == null || command == "--cwd") {
         printUsage()
         return
     }
 
+    val remainingArgs = filtered.drop(1)
+
     try {
-        when (args[0]) {
-            "list", "l" -> list(args.drop(1))
-            "extract", "x" -> extract(args.drop(1))
-            "create", "c" -> create(args.drop(1))
-            "gzip", "z" -> gzip(args.drop(1))
-            "gunzip", "u" -> gunzip(args.drop(1))
+        when (command) {
+            "list", "l" -> list(remainingArgs)
+            "extract", "x" -> extract(remainingArgs)
+            "create", "c" -> create(remainingArgs)
+            "gzip", "z" -> gzip(remainingArgs)
+            "gunzip", "u" -> gunzip(remainingArgs)
             "help", "-h", "--help" -> printUsage()
             else -> {
-                System.err.println("Unknown command: ${args[0]}")
+                System.err.println("Unknown command: $command")
+                println()
                 printUsage()
             }
         }
@@ -36,9 +42,9 @@ fun main(args: Array<String>) {
 
 private fun printUsage() {
     val usage = """
-        kmp-zip-cli — ZIP/GZIP command-line tool powered by kmp-zip
+        kmpzip — ZIP/GZIP command-line tool powered by kmp-zip
 
-        Usage: kmp-zip-cli <command> [options] [args]
+        Usage: kmpzip <command> [options] [args]
 
         Commands:
           list,    l   <file.zip>           List ZIP contents
@@ -98,7 +104,7 @@ private class CliArgs(args: List<String>) {
 
 private fun list(args: List<String>) {
     val cli = CliArgs(args)
-    require(cli.positional.isNotEmpty()) { "Usage: kmp-zip-cli list <file.zip> [-p password]" }
+    require(cli.positional.isNotEmpty()) { "Usage: kmpzip list <file.zip> [-p password]" }
 
     val file = cli.resolve(cli.positional[0])
     require(file.exists()) { "File not found: ${file.path}" }
@@ -140,7 +146,7 @@ private fun list(args: List<String>) {
 
 private fun extract(args: List<String>) {
     val cli = CliArgs(args)
-    require(cli.positional.isNotEmpty()) { "Usage: kmp-zip-cli extract <file.zip> [-d dir] [-p password]" }
+    require(cli.positional.isNotEmpty()) { "Usage: kmpzip extract <file.zip> [-d dir] [-p password]" }
 
     val file = cli.resolve(cli.positional[0])
     require(file.exists()) { "File not found: ${file.path}" }
@@ -191,7 +197,7 @@ private fun extract(args: List<String>) {
 private fun create(args: List<String>) {
     val cli = CliArgs(args)
     require(cli.positional.size >= 2) {
-        "Usage: kmp-zip-cli create <file.zip> [-p password] <files..>"
+        "Usage: kmpzip create <file.zip> [-p password] <files..>"
     }
 
     val zipFile = cli.resolve(cli.positional[0])
@@ -249,7 +255,7 @@ private fun addToZip(zos: ZipOutputStream, file: File, prefix: String) {
 
 private fun gzip(args: List<String>) {
     val cli = CliArgs(args)
-    require(cli.positional.isNotEmpty()) { "Usage: kmp-zip-cli gzip <file>" }
+    require(cli.positional.isNotEmpty()) { "Usage: kmpzip gzip <file>" }
 
     val inputFile = cli.resolve(cli.positional[0])
     require(inputFile.exists()) { "File not found: ${inputFile.path}" }
@@ -274,7 +280,7 @@ private fun gzip(args: List<String>) {
 
 private fun gunzip(args: List<String>) {
     val cli = CliArgs(args)
-    require(cli.positional.isNotEmpty()) { "Usage: kmp-zip-cli gunzip <file.gz>" }
+    require(cli.positional.isNotEmpty()) { "Usage: kmpzip gunzip <file.gz>" }
 
     val inputFile = cli.resolve(cli.positional[0])
     require(inputFile.exists()) { "File not found: ${inputFile.path}" }
