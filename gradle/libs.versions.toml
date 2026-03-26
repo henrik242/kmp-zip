@@ -8,7 +8,7 @@ dependency-updates = "0.53.0"
 [libraries]
 kotlinx-io-core = { module = "org.jetbrains.kotlinx:kotlinx-io-core", version.ref = "kotlinx-io" }
 okio = { module = "com.squareup.okio:okio", version.ref = "okio" }
-zip4j = { module = "net.lingala.zip4j:zip4j", version = "2.11.5" }
+zip4j = { module = "net.lingala.zip4j:zip4j", version = "2.11.6" }
 
 [plugins]
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
