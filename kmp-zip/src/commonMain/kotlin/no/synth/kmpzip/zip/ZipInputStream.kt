@@ -2,6 +2,7 @@ package no.synth.kmpzip.zip
 
 import no.synth.kmpzip.crypto.AesExtraField
 import no.synth.kmpzip.crypto.AesStrength
+import no.synth.kmpzip.crypto.Crc32
 import no.synth.kmpzip.crypto.WinZipAesCipher
 import no.synth.kmpzip.crypto.ZipCrypto
 import no.synth.kmpzip.io.InputStream
@@ -50,6 +51,14 @@ class ZipInputStream(
     // Legacy (ZipCrypto) decryption state
     private var legacyCipher: ZipCrypto? = null
     private var legacyRemainingEncryptedBytes: Long = 0
+
+    // Per-entry running CRC-32 over decrypted+inflated bytes; verified on entry close.
+    private var entryCrc: Crc32? = null
+    private var entryEncrypted: Boolean = false
+
+    // True when the current entry's CRC is not stored (AE-2 stores CRC=0 in the
+    // local header and central directory; the AES auth code covers integrity).
+    private var entrySkipCrc: Boolean = false
 
     fun readBytes(): ByteArray {
         val chunks = mutableListOf<ByteArray>()
@@ -116,6 +125,7 @@ class ZipInputStream(
         aesCipher = null
         legacyCipher = null
         actualCompressionMethod = method
+        entrySkipCrc = false
 
         if (method == ZipConstants.AE_ENCRYPTED && isEncrypted) {
             val aesField = AesExtraField.parse(extra)
@@ -125,6 +135,7 @@ class ZipInputStream(
 
             actualCompressionMethod = aesField.actualCompressionMethod
             effectiveMethod = aesField.actualCompressionMethod
+            if (aesField.version == 2) entrySkipCrc = true
 
             val salt = readExact(aesField.strength.saltLength)
             val pvv = readExact(2)
@@ -190,6 +201,8 @@ class ZipInputStream(
 
         currentEntry = entry
         entryEof = false
+        entryCrc = Crc32()
+        entryEncrypted = isEncrypted
 
         when (effectiveMethod) {
             ZipConstants.STORED -> {
@@ -260,6 +273,7 @@ class ZipInputStream(
                 finishEntry()
                 return -1
             }
+            entryCrc?.update(b, off, n)
             return n
         }
 
@@ -279,6 +293,7 @@ class ZipInputStream(
             return -1
         }
         legacyCipher?.decrypt(b, off, n)
+        entryCrc?.update(b, off, n)
         remainingBytes -= n
         if (remainingBytes <= 0) {
             finishEntry()
@@ -295,12 +310,13 @@ class ZipInputStream(
 
         while (true) {
             if (inflaterBufLen > inflaterBufPos) {
-                val result = inf.inflate(
+                val result = inflateOrThrow(
                     inflaterBuf, inflaterBufPos, inflaterBufLen - inflaterBufPos,
-                    b, off, len
+                    b, off, len,
                 )
                 inflaterBufPos += result.bytesConsumed
                 if (result.bytesProduced > 0) {
+                    entryCrc?.update(b, off, result.bytesProduced)
                     if (result.streamEnd) finishEntry()
                     return result.bytesProduced
                 }
@@ -320,8 +336,9 @@ class ZipInputStream(
             }
             if (n == -1) {
                 // No more input — try one final inflate to flush the inflater's internal state
-                val result = inf.inflate(ByteArray(0), 0, 0, b, off, len)
+                val result = inflateOrThrow(ByteArray(0), 0, 0, b, off, len)
                 if (result.bytesProduced > 0) {
+                    entryCrc?.update(b, off, result.bytesProduced)
                     if (result.streamEnd) finishEntry()
                     return result.bytesProduced
                 }
@@ -330,6 +347,23 @@ class ZipInputStream(
             }
             inflaterBufPos = 0
             inflaterBufLen = n
+        }
+    }
+
+    private fun inflateOrThrow(
+        input: ByteArray, inOff: Int, inLen: Int,
+        output: ByteArray, outOff: Int, outLen: Int,
+    ): InflateResult {
+        val inf = inflater ?: throw IllegalStateException("Inflater not initialized")
+        return try {
+            inf.inflate(input, inOff, inLen, output, outOff, outLen)
+        } catch (e: Exception) {
+            // Garbage input from a wrong-password decryption usually surfaces as
+            // a deflate error before the CRC check has a chance to run.
+            if (entryEncrypted) {
+                throw ZipPasswordException("Wrong password for entry: ${currentEntry?.name}")
+            }
+            throw e
         }
     }
 
@@ -419,6 +453,22 @@ class ZipInputStream(
 
         if (hasDataDescriptor) {
             readDataDescriptor()
+        }
+
+        verifyEntryCrc()
+    }
+
+    private fun verifyEntryCrc() {
+        val computed = entryCrc ?: return
+        entryCrc = null
+        if (entrySkipCrc) return
+        val expected = currentEntry?.crc ?: return
+        if (expected < 0) return
+        if (computed.value() != expected) {
+            if (entryEncrypted) {
+                throw ZipPasswordException("Wrong password for entry: ${currentEntry?.name}")
+            }
+            throw Exception("CRC mismatch for entry: ${currentEntry?.name}")
         }
     }
 

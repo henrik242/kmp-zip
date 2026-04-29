@@ -60,15 +60,13 @@ object Crypto {
      * @return the CRC-32 checksum
      */
     fun crc32(data: ByteArray): Long {
-        var crc = 0xFFFFFFFF.toInt()
-        for (b in data) {
-            crc = (crc ushr 8) xor CRC32_TABLE[(crc xor (b.toInt() and 0xFF)) and 0xFF]
-        }
-        return (crc xor 0xFFFFFFFF.toInt()).toLong() and 0xFFFFFFFFL
+        val c = Crc32()
+        c.update(data, 0, data.size)
+        return c.value()
     }
 
     // Shared CRC32 lookup table (polynomial 0xEDB88320)
-    internal val CRC32_TABLE = IntArray(256) { n ->
+    val CRC32_TABLE = IntArray(256) { n ->
         var c = n
         repeat(8) {
             c = if (c and 1 != 0) {
@@ -79,4 +77,20 @@ object Crypto {
         }
         c
     }
+}
+
+/** Streaming CRC-32 (polynomial 0xEDB88320) for accumulating across multiple chunks. */
+class Crc32 {
+    private var crc: Int = 0xFFFFFFFF.toInt()
+
+    fun update(buf: ByteArray, off: Int, len: Int) {
+        var c = crc
+        val end = off + len
+        for (i in off until end) {
+            c = (c ushr 8) xor Crypto.CRC32_TABLE[(c xor (buf[i].toInt() and 0xFF)) and 0xFF]
+        }
+        crc = c
+    }
+
+    fun value(): Long = (crc xor 0xFFFFFFFF.toInt()).toLong() and 0xFFFFFFFFL
 }

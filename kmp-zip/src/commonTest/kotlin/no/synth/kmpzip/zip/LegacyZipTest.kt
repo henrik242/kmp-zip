@@ -226,8 +226,14 @@ class LegacyZipTest {
         zos.closeEntry()
         zos.close()
 
+        // ZipCrypto's wrong-password check is a single byte (last byte of the
+        // 12-byte header), so each open has a ~2/256 false-positive rate. Read
+        // the entry so the CRC check fires when the byte check happens to pass.
         val zis = ZipInputStream(baos.toByteArray(), "wrongpassword")
-        val e = assertFailsWith<ZipPasswordException> { zis.nextEntry }
+        val e = assertFailsWith<ZipPasswordException> {
+            zis.nextEntry
+            zis.readBytes()
+        }
         assertTrue(e.message.orEmpty().contains("Wrong password"))
         zis.close()
     }

@@ -119,30 +119,13 @@ class ZipOutputStream(
 
             // Don't write header yet — we'll write everything at closeEntry()
         } else if (isEncrypted && encryption == ZipEncryption.LEGACY) {
-            // Legacy (ZipCrypto) encrypted entry
+            // Legacy (ZipCrypto) encrypted entry — buffer (deflated or raw) so
+            // the header can be written after the CRC and final sizes are known.
             if (method == ZipConstants.DEFLATED) {
-                // Buffer deflated data so we can write sizes in the header
                 deflater = PlatformDeflater().also { it.init(level) }
-                compressedBuffer = mutableListOf()
-                bufferedMethod = method // reuse field to track actual method
-            } else {
-                // STORED: stream directly (sizes known upfront)
-                // Adjust compressedSize to include 12-byte encryption header
-                entry.compressedSize = entry.compressedSize + ZipCrypto.ENCRYPTION_HEADER_SIZE
-                val flag = 0x01
-                writeLocalFileHeader(entry, method, flag, ZipConstants.VERSION_DEFAULT)
-
-                val cipher = ZipCrypto(password)
-                val checkByte = if (entry.crc != -1L) {
-                    ((entry.crc ushr 24) and 0xFF).toInt()
-                } else {
-                    ((entry.time ushr 8) and 0xFF).toInt()
-                }
-                val encHeader = ZipCrypto.createEncryptionHeader(cipher, checkByte)
-                writeRaw(encHeader, 0, encHeader.size)
-                entryCompressedSize += ZipCrypto.ENCRYPTION_HEADER_SIZE
-                legacyCipher = cipher
             }
+            compressedBuffer = mutableListOf()
+            bufferedMethod = method
         } else {
             // Non-encrypted: write header immediately, streaming mode
             val flag = when (method) {
