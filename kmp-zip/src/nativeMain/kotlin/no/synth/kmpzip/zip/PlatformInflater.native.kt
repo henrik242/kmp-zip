@@ -15,15 +15,17 @@ internal actual class PlatformInflater actual constructor() {
         s.opaque = null
         s.avail_in = 0u
         s.next_in = null
+        // zlib's MAX_WBITS is defined as the macro 15. Inlined here because some K/Native
+        // zlib cinterop bindings don't expose macro constants.
         val wbits = when {
-            gzip -> MAX_WBITS + 16
-            nowrap -> -MAX_WBITS
-            else -> MAX_WBITS
+            gzip -> 15 + 16
+            nowrap -> -15
+            else -> 15
         }
         val ret = inflateInit2(s.ptr, wbits)
         if (ret != Z_OK) {
             nativeHeap.free(s)
-            throw Exception("inflateInit2 failed: $ret")
+            throw IllegalStateException("inflateInit2 failed: $ret")
         }
         stream = s
         finished = false
@@ -46,7 +48,7 @@ internal actual class PlatformInflater actual constructor() {
 
             val ret = inflate(s.ptr, Z_NO_FLUSH)
             if (ret != Z_OK && ret != Z_STREAM_END && ret != Z_BUF_ERROR) {
-                throw Exception("inflate failed: $ret")
+                throw IllegalStateException("inflate failed: $ret")
             }
 
             val bytesConsumed = inputLen - s.avail_in.toInt()

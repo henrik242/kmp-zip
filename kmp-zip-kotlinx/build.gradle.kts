@@ -9,13 +9,12 @@ repositories {
 
 kotlin {
     jvm()
-    iosX64()
     iosArm64()
     iosSimulatorArm64()
-
-    compilerOptions {
-        freeCompilerArgs.add("-Xexpect-actual-classes")
-    }
+    macosArm64()
+    linuxX64()
+    linuxArm64()
+    mingwX64()
 
     sourceSets {
         commonMain {

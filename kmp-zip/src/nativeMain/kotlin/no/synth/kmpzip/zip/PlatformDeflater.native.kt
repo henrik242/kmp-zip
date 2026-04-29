@@ -15,15 +15,17 @@ internal actual class PlatformDeflater actual constructor() {
         s.opaque = null
         s.avail_in = 0u
         s.next_in = null
+        // zlib's MAX_WBITS is defined as the macro 15. Inlined here because some K/Native
+        // zlib cinterop bindings don't expose macro constants.
         val wbits = when {
-            gzip -> MAX_WBITS + 16
-            nowrap -> -MAX_WBITS
-            else -> MAX_WBITS
+            gzip -> 15 + 16
+            nowrap -> -15
+            else -> 15
         }
         val ret = deflateInit2(s.ptr, level, Z_DEFLATED, wbits, 8, Z_DEFAULT_STRATEGY)
         if (ret != Z_OK) {
             nativeHeap.free(s)
-            throw Exception("deflateInit2 failed: $ret")
+            throw IllegalStateException("deflateInit2 failed: $ret")
         }
         stream = s
         finished = false
@@ -51,7 +53,7 @@ internal actual class PlatformDeflater actual constructor() {
             val flush = if (finish) Z_FINISH else Z_NO_FLUSH
             val ret = deflate(s.ptr, flush)
             if (ret != Z_OK && ret != Z_STREAM_END && ret != Z_BUF_ERROR) {
-                throw Exception("deflate failed: $ret")
+                throw IllegalStateException("deflate failed: $ret")
             }
 
             val bytesConsumed = inputLen - s.avail_in.toInt()

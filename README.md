@@ -1,12 +1,12 @@
 # kmp-zip
 
-Kotlin Multiplatform ZIP and GZIP library for JVM and iOS targets, with encryption support.
+Kotlin Multiplatform ZIP and GZIP library for JVM, iOS, macOS, Linux, and Windows targets, with encryption support.
 
 Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, and `GzipOutputStream` with a common API across platforms. Supports reading and writing encrypted ZIP archives:
 - **WinZip AES** (AES-128/192/256, AE-1 and AE-2 formats) — strong encryption, compatible with 7-Zip, WinRAR, etc.
 - **PKWare traditional** (ZipCrypto) — legacy encryption compatible with all ZIP tools including macOS `zip` and Windows Explorer
 
-All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on iOS/Native.
+All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on Apple targets, `platform.zlib` + a pure-Kotlin AES/HMAC/PBKDF2 fallback on Linux and Windows native targets.
 
 ## Modules
 
@@ -20,7 +20,10 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 ## Targets
 
 - **JVM** (also consumable from Android projects)
-- **iosX64**, **iosArm64**, **iosSimulatorArm64**
+- **iosArm64**, **iosSimulatorArm64**
+- **macosArm64**
+- **linuxX64**, **linuxArm64**
+- **mingwX64**
 
 ## Installation
 
@@ -31,13 +34,13 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:0.9.2")
+                implementation("no.synth:kmp-zip:0.10.0")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:0.9.2")
+                implementation("no.synth:kmp-zip-kotlinx:0.10.0")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:0.9.2")
+                implementation("no.synth:kmp-zip-okio:0.10.0")
             }
         }
     }
@@ -419,8 +422,8 @@ Requires JDK 21 and Xcode (for iOS targets).
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v0.9.2
-git push origin v0.9.2
+git tag v0.10.0
+git push origin v0.10.0
 ```
 
 ## License

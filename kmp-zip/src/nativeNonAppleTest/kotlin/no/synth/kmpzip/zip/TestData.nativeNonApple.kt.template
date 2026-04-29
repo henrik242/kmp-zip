@@ -1,0 +1,64 @@
+package no.synth.kmpzip.zip
+
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.convert
+import kotlinx.cinterop.usePinned
+import platform.posix.SEEK_END
+import platform.posix.SEEK_SET
+import platform.posix.fclose
+import platform.posix.fopen
+import platform.posix.fread
+import platform.posix.fseek
+import platform.posix.ftell
+
+@OptIn(ExperimentalForeignApi::class)
+actual object TestData {
+    private const val RESOURCE_DIR = "@@RESOURCE_DIR@@"
+
+    actual fun loadResource(name: String): ByteArray {
+        val path = "$RESOURCE_DIR/$name"
+        val file = fopen(path, "rb") ?: error("Test resource not found: $path")
+        try {
+            fseek(file, 0.convert(), SEEK_END)
+            val size = ftell(file).toInt()
+            fseek(file, 0.convert(), SEEK_SET)
+            if (size <= 0) return ByteArray(0)
+            val bytes = ByteArray(size)
+            bytes.usePinned { pinned ->
+                val read = fread(pinned.addressOf(0), 1.convert(), size.convert(), file).toInt()
+                if (read != size) error("Short read for $path: got $read of $size")
+            }
+            return bytes
+        } finally {
+            fclose(file)
+        }
+    }
+
+    actual val storedZip: ByteArray get() = loadResource("stored.zip")
+    actual val deflatedZip: ByteArray get() = loadResource("deflated.zip")
+    actual val multiEntryZip: ByteArray get() = loadResource("multi-entry.zip")
+    actual val directoryZip: ByteArray get() = loadResource("directory.zip")
+    actual val emptyZip: ByteArray get() = loadResource("empty.zip")
+    actual val binaryZip: ByteArray get() = loadResource("binary.zip")
+    actual val cliStoredZip: ByteArray get() = loadResource("cli-stored.zip")
+    actual val cliDeflatedZip: ByteArray get() = loadResource("cli-deflated.zip")
+    actual val cliWithDirZip: ByteArray get() = loadResource("cli-with-dir.zip")
+    actual val cliMixedZip: ByteArray get() = loadResource("cli-mixed.zip")
+    actual val sevenStoredZip: ByteArray get() = loadResource("seven-stored.zip")
+    actual val sevenDeflatedZip: ByteArray get() = loadResource("seven-deflated.zip")
+    actual val cliGzip: ByteArray get() = loadResource("cli.gz")
+
+    actual val aes128DeflatedZip: ByteArray get() = loadResource("aes128-deflated.zip")
+    actual val aes256BinaryZip: ByteArray get() = loadResource("aes256-binary.zip")
+    actual val aes256DeflatedZip: ByteArray get() = loadResource("aes256-deflated.zip")
+    actual val aes256MultiZip: ByteArray get() = loadResource("aes256-multi.zip")
+    actual val aes256StoredZip: ByteArray get() = loadResource("aes256-stored.zip")
+
+    actual val zip4jAes256DeflatedZip: ByteArray get() = loadResource("zip4j-aes256-deflated.zip")
+
+    actual val legacyStoredZip: ByteArray get() = loadResource("legacy-stored.zip")
+    actual val legacyDeflatedZip: ByteArray get() = loadResource("legacy-deflated.zip")
+    actual val legacyBinaryZip: ByteArray get() = loadResource("legacy-binary.zip")
+    actual val legacyMultiZip: ByteArray get() = loadResource("legacy-multi.zip")
+}

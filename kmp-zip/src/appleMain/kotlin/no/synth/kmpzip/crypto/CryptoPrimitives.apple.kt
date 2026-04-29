@@ -9,7 +9,6 @@ import platform.Security.kSecRandomDefault
 internal actual fun aesEcbEncryptBlock(key: ByteArray, block: ByteArray): ByteArray {
     require(block.size == 16) { "AES block must be 16 bytes" }
     val output = ByteArray(16)
-    var dataOutMoved = 0.toULong()
     key.usePinned { keyPinned ->
         block.usePinned { blockPinned ->
             output.usePinned { outPinned ->
@@ -29,9 +28,8 @@ internal actual fun aesEcbEncryptBlock(key: ByteArray, block: ByteArray): ByteAr
                         outMovedPtr.ptr,
                     )
                     if (status != kCCSuccess) {
-                        throw Exception("CCCrypt AES-ECB encrypt failed: $status")
+                        throw IllegalStateException("CCCrypt AES-ECB encrypt failed: $status")
                     }
-                    dataOutMoved = outMovedPtr.value
                 }
             }
         }
@@ -82,9 +80,14 @@ internal actual fun pbkdf2HmacSha1(
     keyLengthBytes: Int,
 ): ByteArray {
     val derivedKey = ByteArray(keyLengthBytes)
-    // CCKeyDerivationPBKDF's `password` param is `const char *` which Kotlin/Native
-    // maps to `String?`. Decode UTF-8 bytes to String; the interop layer passes the
-    // UTF-8 representation back to C, and passwordLen limits the bytes read.
+    // CCKeyDerivationPBKDF's password param is `const char *`, which Kotlin/Native's
+    // CommonCrypto cinterop binds as `String?` — there is no overload taking raw bytes,
+    // so we route the password through `decodeToString()`. For ASCII / valid UTF-8 this
+    // is identity; for non-UTF-8 byte sequences (rare in ZIP password use) it replaces
+    // each invalid byte with U+FFFD and then truncates back to `password.size` bytes,
+    // which won't match the result of a raw-byte PBKDF2. The JVM impl has the same
+    // round-trip via PBEKeySpec(char[]), and the pure-Kotlin (Linux/MinGW) impl uses
+    // raw bytes — passwords containing non-UTF-8 bytes will diverge across platforms.
     val passwordString = password.decodeToString()
     salt.usePinned { saltPinned ->
         derivedKey.usePinned { keyPinned ->
@@ -100,7 +103,7 @@ internal actual fun pbkdf2HmacSha1(
                 keyLengthBytes.toULong(),
             )
             if (status != kCCSuccess) {
-                throw Exception("CCKeyDerivationPBKDF failed: $status")
+                throw IllegalStateException("CCKeyDerivationPBKDF failed: $status")
             }
         }
     }
@@ -113,7 +116,7 @@ internal actual fun secureRandomBytes(size: Int): ByteArray {
     bytes.usePinned { pinned ->
         val status = SecRandomCopyBytes(kSecRandomDefault, size.toULong(), pinned.addressOf(0))
         if (status != 0) {
-            throw Exception("SecRandomCopyBytes failed: $status")
+            throw IllegalStateException("SecRandomCopyBytes failed: $status")
         }
     }
     return bytes

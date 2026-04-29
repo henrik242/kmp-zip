@@ -60,7 +60,10 @@ class GzipStreamJvmTest {
     @Test
     fun ourGzipInputStreamReadsCliOutput() {
         val original = "Hello from gzip CLI subprocess"
-        val proc = ProcessBuilder("bash", "-c", "printf '%s' '$original' | gzip").start()
+        // Feed gzip's stdin directly instead of via `bash -c` so the test runs on
+        // Windows runners (Git-Bash quoting mangles the pipeline command).
+        val proc = ProcessBuilder("gzip").start()
+        proc.outputStream.use { it.write(original.encodeToByteArray()) }
         val gzipBytes = proc.inputStream.readBytes()
         proc.waitFor()
 
