@@ -60,6 +60,8 @@ class ZipInputStream(
     // local header and central directory; the AES auth code covers integrity).
     private var entrySkipCrc: Boolean = false
 
+    private var firstSignatureRead: Boolean = false
+
     fun readBytes(): ByteArray {
         val chunks = mutableListOf<ByteArray>()
         var totalSize = 0
@@ -89,7 +91,17 @@ class ZipInputStream(
             val sig = try {
                 readLeInt()
             } catch (_: Exception) {
+                if (!firstSignatureRead) throw Exception("Not a ZIP file: empty or truncated input")
                 return null
+            }
+            if (!firstSignatureRead) {
+                firstSignatureRead = true
+                if (sig != ZipConstants.LOCAL_FILE_HEADER_SIGNATURE &&
+                    sig != ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE &&
+                    sig != ZipConstants.END_OF_CENTRAL_DIR_SIGNATURE
+                ) {
+                    throw Exception("Not a ZIP file: bad signature 0x${sig.toUInt().toString(16).padStart(8, '0')}")
+                }
             }
             if (sig != ZipConstants.LOCAL_FILE_HEADER_SIGNATURE) return null
 

@@ -383,16 +383,16 @@ class ZipInputStreamTest {
     // -- Invalid/empty data --
 
     @Test
-    fun emptyByteArrayReturnsNullEntry() {
+    fun emptyByteArrayThrows() {
         val zis = ZipInputStream(byteArrayOf())
-        assertNull(zis.nextEntry)
+        assertFails { zis.nextEntry }
         zis.close()
     }
 
     @Test
-    fun invalidDataReturnsNullEntry() {
+    fun invalidDataThrows() {
         val zis = ZipInputStream(byteArrayOf(0x00, 0x01, 0x02))
-        assertNull(zis.nextEntry)
+        assertFails { zis.nextEntry }
         zis.close()
     }
 

@@ -11,6 +11,24 @@ actual class GzipInputStream actual constructor(private val input: InputStream) 
     private var closed = false
     private var eof = false
 
+    init {
+        // Validate the gzip magic upfront so callers get a clear error instead
+        // of a cryptic zlib `inflate failed: -3` mid-stream.
+        var got = 0
+        while (got < 2) {
+            val n = input.read(inputBuf, got, 2 - got)
+            if (n == -1) break
+            got += n
+        }
+        if (got < 2 ||
+            (inputBuf[0].toInt() and 0xFF) != 0x1F ||
+            (inputBuf[1].toInt() and 0xFF) != 0x8B
+        ) {
+            throw Exception("Not in gzip format")
+        }
+        inputBufLen = got
+    }
+
     actual override fun read(): Int {
         val b = ByteArray(1)
         val n = read(b, 0, 1)
