@@ -15,13 +15,16 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            tasks: ":kmp-zip:jvmTest :kmp-zip:iosSimulatorArm64Test :kmp-zip:macosArm64Test :kmp-zip-okio:check :kmp-zip-kotlinx:check"
+            tasks: ":kmp-zip:jvmTest :kmp-zip:iosSimulatorArm64Test :kmp-zip:macosArm64Test :kmp-zip-okio:check :kmp-zip-kotlinx:check :kmp-zip-cli:jvmTest :kmp-zip-cli:macosArm64Test"
+            cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableMacosArm64"
             primary: true
           - os: ubuntu-latest
-            tasks: ":kmp-zip:jvmTest :kmp-zip:linuxX64Test :kmp-zip-okio:linuxX64Test :kmp-zip-kotlinx:linuxX64Test"
+            tasks: ":kmp-zip:jvmTest :kmp-zip:linuxX64Test :kmp-zip-okio:linuxX64Test :kmp-zip-kotlinx:linuxX64Test :kmp-zip-cli:jvmTest :kmp-zip-cli:linuxX64Test"
+            cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableLinuxX64 :kmp-zip-cli:linkReleaseExecutableLinuxArm64"
             primary: false
           - os: windows-latest
-            tasks: ":kmp-zip:jvmTest :kmp-zip:mingwX64Test :kmp-zip-okio:mingwX64Test :kmp-zip-kotlinx:mingwX64Test"
+            tasks: ":kmp-zip:jvmTest :kmp-zip:mingwX64Test :kmp-zip-okio:mingwX64Test :kmp-zip-kotlinx:mingwX64Test :kmp-zip-cli:jvmTest :kmp-zip-cli:mingwX64Test"
+            cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableMingwX64"
             primary: false
     runs-on: ${{ matrix.os }}
     steps:
@@ -43,11 +46,42 @@ jobs:
         if: matrix.primary
         shell: bash
         run: ./gradlew build publishToMavenLocal
+      - name: Link release CLI binaries
+        shell: bash
+        run: ./gradlew ${{ matrix.cli-link-tasks }}
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: test-reports-${{ matrix.os }}
           path: "**/build/reports/tests/"
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'macos-latest'
+        with:
+          name: kmpzip-macos-arm64
+          path: kmp-zip-cli/build/bin/macosArm64/releaseExecutable/kmpzip-macos-arm64
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: kmpzip-linux-x64
+          path: kmp-zip-cli/build/bin/linuxX64/releaseExecutable/kmpzip-linux-x64
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: kmpzip-linux-arm64
+          path: kmp-zip-cli/build/bin/linuxArm64/releaseExecutable/kmpzip-linux-arm64
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'windows-latest'
+        with:
+          name: kmpzip-windows-x64.exe
+          path: kmp-zip-cli/build/bin/mingwX64/releaseExecutable/kmpzip-windows-x64.exe
+          archive: false
+          if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: matrix.primary
         with:

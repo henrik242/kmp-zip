@@ -1,7 +1,7 @@
 name: Publish
 
 permissions:
-  contents: read
+  contents: write
 
 on:
   push:
@@ -32,3 +32,11 @@ jobs:
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.GPG_SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.GPG_SIGNING_PASSWORD }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            kmp-zip-cli/build/bin/macosArm64/releaseExecutable/kmpzip-macos-arm64
+            kmp-zip-cli/build/bin/linuxX64/releaseExecutable/kmpzip-linux-x64
+            kmp-zip-cli/build/bin/linuxArm64/releaseExecutable/kmpzip-linux-arm64
+            kmp-zip-cli/build/bin/mingwX64/releaseExecutable/kmpzip-windows-x64.exe
+          fail_on_unmatched_files: true

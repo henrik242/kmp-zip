@@ -15,7 +15,7 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 | `no.synth:kmp-zip` | Core I/O, ZIP, and GZIP streams |
 | `no.synth:kmp-zip-kotlinx` | [kotlinx-io](https://github.com/Kotlin/kotlinx-io) `Source`/`Sink` adapters (both directions) for the core streams |
 | `no.synth:kmp-zip-okio` | [OkIO](https://square.github.io/okio/) `BufferedSource`/`BufferedSink`/`Source`/`Sink` adapters (both directions) for the core streams |
-| `kmp-zip-cli` | Command-line tool for ZIP/GZIP operations (JVM, not published to Maven Central) |
+| `kmp-zip-cli` | Command-line tool for ZIP/GZIP operations — ships as standalone native binaries on macOS / Linux / Windows, with a JVM fallback. Not published to Maven Central. |
 
 ## Targets
 
@@ -369,6 +369,12 @@ The `kmp-zip-cli` module provides a command-line tool for ZIP and GZIP operation
 ```sh
 ./kmpzip <command> [options] [args]
 ```
+
+The `./kmpzip` wrapper picks a native binary for the host (`macosArm64`, `linuxX64`, `linuxArm64`) and execs it directly — no JVM startup. The first invocation lazily builds the binary via Gradle; subsequent runs are instant. Hosts without a native binary fall back to `./gradlew :kmp-zip-cli:jvmRun`. On Windows, use `kmpzip.cmd` instead, which builds and execs the `mingwX64` `.exe`.
+
+**Password encoding:** the `-p` argument is encoded as UTF-8. ASCII passwords interoperate with all common ZIP tools. Non-ASCII passwords work between kmp-zip's own implementations (JVM, native, library API), but may not match `unzip` / Info-ZIP, which use the system locale / CP437.
+
+**Linux binary portability:** the `linuxX64` / `linuxArm64` builds dynamically link the host's glibc. They run on common distros (Debian, Ubuntu, RHEL/Alma/Rocky) and on `gcr.io/distroless/cc-debian12`, but not on Alpine / musl or `gcr.io/distroless/static`. zlib is statically linked, so there's no `libz.so.1` runtime dependency.
 
 ### Commands
 

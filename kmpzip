@@ -1,6 +1,33 @@
 #!/usr/bin/env bash
+# kmpzip — wrapper that runs the native CLI binary for the host, falling back to
+# JVM via gradle for unsupported hosts. The native binary is built lazily on first
+# use; subsequent invocations exec the cached binary directly with no Gradle in
+# the loop.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-ARGS="${1:-} --cwd $(pwd) ${*:2}"
-exec "$SCRIPT_DIR/gradlew" -q :kmp-zip-cli:jvmRun --args="$ARGS"
+# Map host -> (Gradle target name, capitalized form for task name, binary base name).
+case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64)   TARGET=linuxX64;   TASK_TARGET=LinuxX64;   BIN_NAME=kmpzip-linux-x64 ;;
+    Linux/aarch64)  TARGET=linuxArm64; TASK_TARGET=LinuxArm64; BIN_NAME=kmpzip-linux-arm64 ;;
+    Darwin/arm64)   TARGET=macosArm64; TASK_TARGET=MacosArm64; BIN_NAME=kmpzip-macos-arm64 ;;
+    *)              TARGET="" ;;
+esac
+
+if [ -n "$TARGET" ]; then
+    BIN="$SCRIPT_DIR/kmp-zip-cli/build/bin/$TARGET/releaseExecutable/$BIN_NAME"
+    if [ ! -x "$BIN" ]; then
+        echo "Building native binary for $TARGET (one-time)…" >&2
+        # Remove any partial output if the build is interrupted, otherwise the next
+        # invocation would `exec` a corrupt zero-byte binary.
+        trap 'rm -f "$BIN"' INT TERM EXIT
+        # -p tells Gradle to use the project at SCRIPT_DIR rather than the user's
+        # current directory (which is typically the dir holding the file to operate on).
+        "$SCRIPT_DIR/gradlew" -q -p "$SCRIPT_DIR" ":kmp-zip-cli:linkReleaseExecutable${TASK_TARGET}"
+        trap - INT TERM EXIT
+    fi
+    exec "$BIN" "$@"
+fi
+
+# No native binary for this host — fall back to JVM.
+exec "$SCRIPT_DIR/gradlew" -q -p "$SCRIPT_DIR" :kmp-zip-cli:jvmRun --args="$*"
