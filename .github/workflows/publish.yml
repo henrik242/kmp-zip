@@ -26,14 +26,6 @@ jobs:
       - run: ./gradlew build
       - run: ./gradlew jvmTest
       - run: ./gradlew iosSimulatorArm64Test
-      - name: Link release CLI binaries (cross-compiled from macOS)
-        run: |
-          ./gradlew \
-            :kmp-zip-cli:linkReleaseExecutableMacosArm64 \
-            :kmp-zip-cli:linkReleaseExecutableMacosX64 \
-            :kmp-zip-cli:linkReleaseExecutableLinuxX64 \
-            :kmp-zip-cli:linkReleaseExecutableLinuxArm64 \
-            :kmp-zip-cli:linkReleaseExecutableMingwX64
       - run: ./gradlew publishAllPublicationsToMavenCentralRepository
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
