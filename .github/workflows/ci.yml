@@ -16,7 +16,7 @@ jobs:
         include:
           - os: macos-latest
             tasks: ":kmp-zip:jvmTest :kmp-zip:iosSimulatorArm64Test :kmp-zip:macosArm64Test :kmp-zip-okio:check :kmp-zip-kotlinx:check :kmp-zip-cli:jvmTest :kmp-zip-cli:macosArm64Test"
-            cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableMacosArm64"
+            cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableMacosArm64 :kmp-zip-cli:linkReleaseExecutableMacosX64"
             primary: true
           - os: ubuntu-latest
             tasks: ":kmp-zip:jvmTest :kmp-zip:linuxX64Test :kmp-zip-okio:linuxX64Test :kmp-zip-kotlinx:linuxX64Test :kmp-zip-cli:jvmTest :kmp-zip-cli:linuxX64Test"
@@ -59,6 +59,13 @@ jobs:
         with:
           name: kmpzip-macos-arm64
           path: kmp-zip-cli/build/bin/macosArm64/releaseExecutable/kmpzip-macos-arm64
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: matrix.os == 'macos-latest'
+        with:
+          name: kmpzip-macos-x64
+          path: kmp-zip-cli/build/bin/macosX64/releaseExecutable/kmpzip-macos-x64
           archive: false
           if-no-files-found: error
       - uses: actions/upload-artifact@v7

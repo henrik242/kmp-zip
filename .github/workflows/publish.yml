@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 jobs:
   publish:
@@ -36,6 +36,7 @@ jobs:
         with:
           files: |
             kmp-zip-cli/build/bin/macosArm64/releaseExecutable/kmpzip-macos-arm64
+            kmp-zip-cli/build/bin/macosX64/releaseExecutable/kmpzip-macos-x64
             kmp-zip-cli/build/bin/linuxX64/releaseExecutable/kmpzip-linux-x64
             kmp-zip-cli/build/bin/linuxArm64/releaseExecutable/kmpzip-linux-arm64
             kmp-zip-cli/build/bin/mingwX64/releaseExecutable/kmpzip-windows-x64.exe

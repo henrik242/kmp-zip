@@ -11,6 +11,7 @@ case "$(uname -s)/$(uname -m)" in
     Linux/x86_64)   TARGET=linuxX64;   TASK_TARGET=LinuxX64;   BIN_NAME=kmpzip-linux-x64 ;;
     Linux/aarch64)  TARGET=linuxArm64; TASK_TARGET=LinuxArm64; BIN_NAME=kmpzip-linux-arm64 ;;
     Darwin/arm64)   TARGET=macosArm64; TASK_TARGET=MacosArm64; BIN_NAME=kmpzip-macos-arm64 ;;
+    Darwin/x86_64)  TARGET=macosX64;   TASK_TARGET=MacosX64;   BIN_NAME=kmpzip-macos-x64 ;;
     *)              TARGET="" ;;
 esac
 

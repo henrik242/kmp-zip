@@ -17,6 +17,7 @@ kotlin {
         }
     }
     macosArm64 { binaries { executable { entryPoint = "no.synth.kmpzip.cli.main"; baseName = "kmpzip-macos-arm64" } } }
+    macosX64 { binaries { executable { entryPoint = "no.synth.kmpzip.cli.main"; baseName = "kmpzip-macos-x64" } } }
     linuxX64 { binaries { executable { entryPoint = "no.synth.kmpzip.cli.main"; baseName = "kmpzip-linux-x64" } } }
     linuxArm64 { binaries { executable { entryPoint = "no.synth.kmpzip.cli.main"; baseName = "kmpzip-linux-arm64" } } }
     mingwX64 { binaries { executable { entryPoint = "no.synth.kmpzip.cli.main"; baseName = "kmpzip-windows-x64" } } }
