@@ -6,8 +6,11 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
+// AES-ECB here is the single-block primitive used to build the AES-CTR keystream
+// in WinZipAesCipher (WinZip AE-2 / ZIP AES). Authentication is provided separately
+// by HMAC-SHA1 (encrypt-then-MAC). The ZIP AES format is fixed; GCM is not an option.
 private val cipherThreadLocal = ThreadLocal.withInitial {
-    Cipher.getInstance("AES/ECB/NoPadding")
+    Cipher.getInstance("AES/ECB/NoPadding") // lgtm[java/weak-cryptographic-algorithm]
 }
 
 private val secureRandom = java.security.SecureRandom()
