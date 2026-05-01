@@ -28,7 +28,17 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 
 ## wasmJs notes
 
-The wasmJs target ships the same library API as every other target. There is no `kmp-zip-cli` for wasmJs and no filesystem helpers — work with `ByteArray` and the stream classes, and wire any file I/O on the host side. Three runtime caveats:
+The wasmJs target ships the same library API as every other target. There is no `kmp-zip-cli` for wasmJs and no filesystem helpers — work with `ByteArray` and the stream classes, and wire any file I/O on the host side.
+
+A working browser sample lives in [`samples/wasmjs-demo`](samples/wasmjs-demo) — a single page that picks a `.gz` or `.zip` file from disk, runs it through `GzipInputStream` / `ZipInputStream` in the browser tab, and shows the result. Run it with:
+
+```sh
+./gradlew :samples:wasmjs-demo:wasmJsBrowserDevelopmentRun
+```
+
+That builds the wasm bundle, starts a webpack dev server on `http://localhost:8080`, and opens it. The `samples/wasmjs-demo/build.gradle.kts` is ~20 lines and is the smallest reproducer of a wasmJs consumer setup.
+
+### Runtime caveats:
 
 - **pako runtime dependency.** Deflate/inflate is delegated to [pako 2.1.0](https://github.com/nodeca/pako), pinned exactly. Kotlin's wasmJs build picks it up automatically — the kmp-zip project's `kotlin-js-store/wasm/yarn.lock` records the tarball SHA-512 (`sha512-w+eufiZ1...`). Downstream consumers manage their own lockfile; commit yours and keep `--frozen-lockfile` on in CI. pako adds ~45 KB minified (~14 KB gzipped) to a wasmJs bundle and is not effectively tree-shakeable.
 - **`Crypto.randomBytes` requires Web Crypto.** Calls `globalThis.crypto.getRandomValues`, which is available in any browser context (HTTPS *or* plain `http://`) and Node 20+. If the runtime doesn't expose Web Crypto — sandboxed JS realms, browsers with Web Crypto disabled by policy — the call throws `IllegalStateException` naming the likely cause.
