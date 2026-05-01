@@ -30,13 +30,13 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 
 The wasmJs target ships the same library API as every other target. There is no `kmp-zip-cli` for wasmJs and no filesystem helpers — work with `ByteArray` and the stream classes, and wire any file I/O on the host side.
 
-A working browser sample lives in [`samples/wasmjs-demo`](samples/wasmjs-demo) — a single page that picks a `.gz` or `.zip` file from disk, runs it through `GzipInputStream` / `ZipInputStream` in the browser tab, and shows the result. Run it with:
+A working browser sample lives in [`samples/wasmjs-demo`](samples/wasmjs-demo) — a single page that picks a `.gz` or `.zip` file from disk, runs it through `GzipInputStream` / `ZipInputStream` in the browser tab, and prompts for a password if the archive is encrypted. Run it with:
 
 ```sh
 ./gradlew :samples:wasmjs-demo:wasmJsBrowserDevelopmentRun
 ```
 
-That builds the wasm bundle, starts a webpack dev server on `http://localhost:8080`, and opens it. The `samples/wasmjs-demo/build.gradle.kts` is ~20 lines and is the smallest reproducer of a wasmJs consumer setup.
+That builds the wasm bundle, starts a webpack dev server on `http://localhost:8080`, and opens it. The sample also ships a `wasmJsNodeTest` harness that runs every archive in `kmp-zip/src/commonTest/resources/testdata/` through the sample's pipeline — see [`samples/wasmjs-demo/README.md`](samples/wasmjs-demo/README.md).
 
 ### Runtime caveats:
 

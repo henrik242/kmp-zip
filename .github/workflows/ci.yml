@@ -15,7 +15,7 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            tasks: ":kmp-zip:jvmTest :kmp-zip:iosSimulatorArm64Test :kmp-zip:macosArm64Test :kmp-zip:wasmJsNodeTest :kmp-zip-okio:check :kmp-zip-kotlinx:check :kmp-zip-cli:jvmTest :kmp-zip-cli:macosArm64Test"
+            tasks: ":kmp-zip:jvmTest :kmp-zip:iosSimulatorArm64Test :kmp-zip:macosArm64Test :kmp-zip:wasmJsNodeTest :samples:wasmjs-demo:wasmJsNodeTest :kmp-zip-okio:check :kmp-zip-kotlinx:check :kmp-zip-cli:jvmTest :kmp-zip-cli:macosArm64Test"
             cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableMacosArm64 :kmp-zip-cli:linkReleaseExecutableMacosX64"
             primary: true
           - os: ubuntu-latest
