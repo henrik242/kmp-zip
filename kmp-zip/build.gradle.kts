@@ -66,6 +66,14 @@ kotlin {
     applyDefaultHierarchyTemplate()
 
     sourceSets {
+        // Holds pure-Kotlin actuals (IO streams, gzip wrappers) shared by every target
+        // except JVM, which uses java.io / java.util.zip.GZIP* directly. Sits above
+        // nativeMain in the hierarchy so wasmJs (no cinterop) can also pull from it.
+        val nonJvmMain by creating { dependsOn(sourceSets["commonMain"]) }
+        val nonJvmTest by creating { dependsOn(sourceSets["commonTest"]) }
+        sourceSets["nativeMain"].dependsOn(nonJvmMain)
+        sourceSets["nativeTest"].dependsOn(nonJvmTest)
+
         val nativeNonAppleMain by creating { dependsOn(sourceSets["nativeMain"]) }
         val nativeNonAppleTest by creating { dependsOn(sourceSets["nativeTest"]) }
         listOf("linuxX64", "linuxArm64", "mingwX64").forEach { target ->
