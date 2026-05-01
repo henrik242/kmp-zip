@@ -1,13 +1,17 @@
 package no.synth.kmpzip.crypto
 
 // Pure-Kotlin AES-ECB / SHA-1 / HMAC-SHA1 / PBKDF2-HMAC-SHA1.
-// Used as the actual implementation on Kotlin/Native targets without a system crypto
-// library (Linux, MinGW). JVM and Apple targets keep their faster platform impls.
+// Used as the actual implementation on Kotlin targets without a system crypto
+// library: Linux native, Windows native, and wasmJs. JVM and Apple targets keep
+// their faster platform impls.
 //
-// Security note: AES uses a table-based S-box (SBOX[...] with secret-dependent indices),
-// which is not constant-time and leaks key bits via cache-timing on shared hardware.
-// Acceptable for the ZIP password-recovery threat model this library addresses;
-// callers needing constant-time AES on Linux/Windows native should bring their own.
+// Security note: AES uses a table-based S-box (SBOX[...] with secret-dependent
+// indices), which is not constant-time and leaks key bits via cache-timing on
+// shared hardware. Acceptable for the original ZIP password-recovery threat
+// model on Linux/Windows servers, but the residual risk grows on wasmJs in a
+// browser tab next to attacker JavaScript — the README's "Threat model" section
+// spells out the boundary. PBKDF2 and HMAC-SHA1 below are not table-based.
+// Callers needing constant-time AES on these targets should bring their own.
 // This impl zeroes intermediate key material on completion.
 
 private const val SHA1_BLOCK_LEN = 64

@@ -1,12 +1,12 @@
 # kmp-zip
 
-Kotlin Multiplatform ZIP and GZIP library for JVM, iOS, macOS, Linux, and Windows targets, with encryption support.
+Kotlin Multiplatform ZIP and GZIP library for JVM, iOS, macOS, Linux, Windows, and Kotlin/Wasm (wasmJs) targets, with encryption support.
 
 Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, and `GzipOutputStream` with a common API across platforms. Supports reading and writing encrypted ZIP archives:
 - **WinZip AES** (AES-128/192/256, AE-1 and AE-2 formats) — strong encryption, compatible with 7-Zip, WinRAR, etc.
 - **PKWare traditional** (ZipCrypto) — legacy encryption compatible with all ZIP tools including macOS `zip` and Windows Explorer
 
-All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on Apple targets, `platform.zlib` + a pure-Kotlin AES/HMAC/PBKDF2 fallback on Linux and Windows native targets.
+All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on Apple targets, `platform.zlib` + a pure-Kotlin AES/HMAC/PBKDF2 fallback on Linux and Windows native targets, [pako](https://github.com/nodeca/pako) (MIT) + the same pure-Kotlin crypto on wasmJs.
 
 ## Modules
 
@@ -21,9 +21,41 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 
 - **JVM** (also consumable from Android projects)
 - **iosArm64**, **iosSimulatorArm64**
-- **macosArm64**
+- **macosArm64**, **macosX64**
 - **linuxX64**, **linuxArm64**
 - **mingwX64**
+- **wasmJs** (browser, Node 20+) — see [wasmJs notes](#wasmjs-notes) below
+
+## wasmJs notes
+
+The wasmJs target ships the same library API as every other target. There is no `kmp-zip-cli` for wasmJs and no filesystem helpers — work with `ByteArray` and the stream classes, and wire any file I/O on the host side. Three runtime caveats:
+
+- **pako runtime dependency.** Deflate/inflate is delegated to [pako 2.1.0](https://github.com/nodeca/pako), pinned exactly. Kotlin's wasmJs build picks it up automatically — the kmp-zip project's `kotlin-js-store/wasm/yarn.lock` records the tarball SHA-512 (`sha512-w+eufiZ1...`). Downstream consumers manage their own lockfile; commit yours and keep `--frozen-lockfile` on in CI. pako adds ~45 KB minified (~14 KB gzipped) to a wasmJs bundle and is not effectively tree-shakeable.
+- **`Crypto.randomBytes` requires Web Crypto.** Calls `globalThis.crypto.getRandomValues`, which is available in any browser context (HTTPS *or* plain `http://`) and Node 20+. If the runtime doesn't expose Web Crypto — sandboxed JS realms, browsers with Web Crypto disabled by policy — the call throws `IllegalStateException` naming the likely cause.
+- **Long-running compression blocks the UI thread.** pako is synchronous; deflating a multi-MB archive on the main browser thread can stall rendering for hundreds of ms. For anything beyond small archives, run kmp-zip in a `DedicatedWorker`. Kotlin/Wasm has no `window`/`document` dependency, so a worker works without extra setup.
+
+## Threat model
+
+**Don't encrypt long-lived archives in a browser tab.** Use the JVM/Apple targets or do encryption server-side. The pure-Kotlin AES used on Linux, Windows, and wasmJs is table-based and leaks key bits via cache-timing on shared hardware. In a browser, same-origin attacker JS runs in the same renderer process; an in-process leak there recovers the AES key directly — strictly worse than the PBKDF2 brute-force baseline that protects an archive at rest. (PBKDF2 forces an attacker with only the encrypted bytes to brute-force the password; an in-process AES leak skips that step entirely.) JVM and Apple targets use platform AES (`javax.crypto` / `CommonCrypto`) and are not affected.
+
+Decrypting attacker-supplied archives with a user-typed password in the browser is fine — the password is already there. PBKDF2 and HMAC-SHA1 are not table-based and have no known cache-timing leakage in the pure-Kotlin impl.
+
+**Decompression bombs.** kmp-zip does not enforce an upper bound on inflated output; pako has no `maxOutputLength`. A 1 KB compressed stream can inflate to 1 GB. Cap untrusted ZIP reads explicitly:
+
+```kotlin
+val MAX_BYTES = 100L * 1024 * 1024  // 100 MB
+val out = ByteArray(8192)
+var total = 0L
+while (true) {
+    val n = zis.read(out)
+    if (n == -1) break
+    total += n
+    if (total > MAX_BYTES) error("Entry exceeds size limit")
+    sink.write(out, 0, n)
+}
+```
+
+The `ZipEntry.size` field declares the uncompressed size up front and can be checked before reading; the running counter handles archives that lie about declared size. wasmJs is the most exposed target — browser-side ZIP reading of untrusted input is a liability and should be validated accordingly.
 
 ## Installation
 
@@ -31,16 +63,19 @@ Published on [Maven Central](https://central.sonatype.com/artifact/no.synth/kmp-
 
 ```kotlin
 kotlin {
+    // Add the targets you need, including wasmJs:
+    // wasmJs { browser(); nodejs() }
+
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:0.10.0")
+                implementation("no.synth:kmp-zip:0.11.0")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:0.10.0")
+                implementation("no.synth:kmp-zip-kotlinx:0.11.0")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:0.10.0")
+                implementation("no.synth:kmp-zip-okio:0.11.0")
             }
         }
     }
@@ -428,8 +463,8 @@ Requires JDK 21 and Xcode (for iOS targets).
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v0.10.0
-git push origin v0.10.0
+git tag v0.11.0
+git push origin v0.11.0
 ```
 
 ## License
