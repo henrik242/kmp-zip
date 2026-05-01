@@ -1,5 +1,10 @@
 package no.synth.kmpzip.crypto
 
+// Shared crypto actuals for targets without a system crypto library:
+// linuxX64, linuxArm64, mingwX64, wasmJs. They all delegate to the pure-Kotlin
+// AES / HMAC-SHA1 / PBKDF2 in commonMain. JVM and Apple targets keep faster
+// platform impls. `secureRandomBytes` stays per-target because the random
+// source differs (/dev/urandom, BCryptGenRandom, Web Crypto).
 internal actual fun aesEcbEncryptBlock(key: ByteArray, block: ByteArray): ByteArray =
     aesEcbEncryptBlockImpl(key, block)
 

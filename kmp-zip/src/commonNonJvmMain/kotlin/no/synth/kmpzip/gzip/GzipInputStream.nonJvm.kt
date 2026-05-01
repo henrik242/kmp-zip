@@ -40,25 +40,24 @@ actual class GzipInputStream actual constructor(private val input: InputStream) 
         if (len == 0) return 0
 
         while (true) {
-            // Try to inflate from the current input buffer
-            if (inputBufLen > inputBufPos) {
-                val result = inflater.inflate(
-                    inputBuf, inputBufPos, inputBufLen - inputBufPos,
-                    b, off, len
-                )
-                inputBufPos += result.bytesConsumed
+            // Always call inflate, even with no fresh input. The inflater may
+            // hold buffered output left over from a previous push (the wasmJs
+            // pako wrapper accumulates output internally and needs subsequent
+            // calls to drain it). On native/zlib this is a cheap no-op.
+            val available = inputBufLen - inputBufPos
+            val result = inflater.inflate(inputBuf, inputBufPos, available, b, off, len)
+            inputBufPos += result.bytesConsumed
 
-                if (result.bytesProduced > 0) {
-                    if (result.streamEnd) eof = true
-                    return result.bytesProduced
-                }
-                if (result.streamEnd) {
-                    eof = true
-                    return -1
-                }
+            if (result.bytesProduced > 0) {
+                if (result.streamEnd) eof = true
+                return result.bytesProduced
+            }
+            if (result.streamEnd) {
+                eof = true
+                return -1
             }
 
-            // Need more input data
+            // Produced nothing and not at stream end → need more input.
             val n = input.read(inputBuf, 0, inputBuf.size)
             if (n == -1) {
                 eof = true
