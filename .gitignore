@@ -5,3 +5,4 @@ build/
 local.properties
 .kotlin/
 .env
+.DS_Store

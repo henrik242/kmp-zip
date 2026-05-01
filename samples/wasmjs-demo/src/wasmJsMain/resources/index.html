@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>kmp-zip · wasmJs demo</title>
+    <link rel="icon" href="data:,">
+    <style>
+        body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+        h1 { margin: 0 0 .25rem; font-size: 1.4rem; }
+        .lede { margin: 0 0 2rem; color: #666; }
+        section { border: 1px solid #ddd; border-radius: 6px; padding: 1rem 1.25rem; margin-bottom: 1.5rem; }
+        section h2 { margin: 0 0 .75rem; font-size: 1.05rem; }
+        section p { margin: 0 0 .75rem; color: #555; }
+        input[type=file] { margin-bottom: .75rem; }
+        pre { background: #f6f8fa; padding: .75rem 1rem; border-radius: 4px; overflow-x: auto; max-height: 320px; font-size: 12px; margin: 0; }
+        .err { color: #c00; }
+        .meta { color: #888; font-size: 12px; margin-top: .5rem; }
+    </style>
+</head>
+<body>
+    <h1>kmp-zip · wasmJs demo</h1>
+    <p class="lede">Decompress files in your browser using kmp-zip on Kotlin/Wasm. Nothing is uploaded — everything runs in the tab.</p>
+
+    <section>
+        <h2>Gunzip</h2>
+        <p>Pick a <code>.gz</code> file. The decompressed bytes are decoded as UTF-8 and shown below (binary content may render oddly).</p>
+        <input type="file" id="gz-file" accept=".gz,application/gzip">
+        <pre id="gz-output">No file selected.</pre>
+        <p class="meta" id="gz-meta"></p>
+    </section>
+
+    <section>
+        <h2>List ZIP entries</h2>
+        <p>Pick a <code>.zip</code> file to see its entries (name, uncompressed size, method).</p>
+        <input type="file" id="zip-file" accept=".zip,application/zip">
+        <pre id="zip-output">No file selected.</pre>
+        <p class="meta" id="zip-meta"></p>
+    </section>
+
+    <!--
+        The Kotlin/Wasm bundle is loaded as a side-effecting script that runs
+        `fun main()` on load. main() wires the file inputs above to the
+        gunzip / listZipEntries functions in Main.kt directly. No @JsExport,
+        no JS-side import wrangling.
+    -->
+    <script src="./wasmjs-demo.js"></script>
+</body>
+</html>
