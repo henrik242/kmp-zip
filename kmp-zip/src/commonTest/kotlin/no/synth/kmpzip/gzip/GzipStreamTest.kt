@@ -7,6 +7,8 @@ import no.synth.kmpzip.zip.TestData
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 
 class GzipStreamTest {
 
@@ -154,6 +156,45 @@ class GzipStreamTest {
     fun decompressCliGzip() {
         val decompressed = gzipDecompress(TestData.cliGzip)
         assertEquals("Hello from gzip CLI", decompressed.decodeToString())
+    }
+
+    @Test
+    fun decompressConcatenatedMembers() {
+        // RFC 1952 §2.2: concatenated gzip members must decode as one logical stream.
+        val a = "Hello, ".encodeToByteArray()
+        val b = "world!".encodeToByteArray()
+        val concatenated = gzipCompress(a) + gzipCompress(b)
+        val decompressed = gzipDecompress(concatenated)
+        assertEquals("Hello, world!", decompressed.decodeToString())
+    }
+
+    @Test
+    fun truncatedGzipThrows() {
+        val original = ByteArray(50_000) { (it % 256).toByte() }
+        val compressed = gzipCompress(original)
+        // Drop the last 100 bytes — payload + trailer are now incomplete.
+        val truncated = compressed.copyOf(compressed.size - 100)
+        assertFails { gzipDecompress(truncated) }
+    }
+
+    @Test
+    fun corruptedCrc32Throws() {
+        val original = "abcdefghij".repeat(1000).encodeToByteArray()
+        val compressed = gzipCompress(original)
+        // The CRC32 sits at bytes [size-8..size-5). Flip a bit in it.
+        val corrupted = compressed.copyOf()
+        corrupted[corrupted.size - 8] = (corrupted[corrupted.size - 8].toInt() xor 0x01).toByte()
+        assertFails { gzipDecompress(corrupted) }
+    }
+
+    @Test
+    fun corruptedISizeThrows() {
+        val original = "abcdefghij".repeat(1000).encodeToByteArray()
+        val compressed = gzipCompress(original)
+        // The ISIZE (uncompressed length mod 2^32) sits in the last 4 bytes.
+        val corrupted = compressed.copyOf()
+        corrupted[corrupted.size - 1] = (corrupted[corrupted.size - 1].toInt() xor 0x01).toByte()
+        assertFails { gzipDecompress(corrupted) }
     }
 
     @Test

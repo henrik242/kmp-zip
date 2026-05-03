@@ -31,6 +31,13 @@ internal actual class PlatformInflater actual constructor() {
         finished = false
     }
 
+    actual fun reset() {
+        val s = stream ?: throw IllegalStateException("Inflater not initialized")
+        val ret = inflateReset(s.ptr)
+        if (ret != Z_OK) throw IllegalStateException("inflateReset failed: $ret")
+        finished = false
+    }
+
     actual fun inflate(
         input: ByteArray, inputOffset: Int, inputLen: Int,
         output: ByteArray, outputOffset: Int, outputLen: Int,

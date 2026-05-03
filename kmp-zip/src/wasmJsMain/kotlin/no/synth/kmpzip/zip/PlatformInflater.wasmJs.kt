@@ -5,6 +5,8 @@ package no.synth.kmpzip.zip
 internal actual class PlatformInflater actual constructor() {
     private var inflater: Inflate? = null
     private val drain = PakoOutputDrain()
+    private var lastNowrap = false
+    private var lastGzip = false
 
     actual fun init(nowrap: Boolean, gzip: Boolean) {
         val opts = pakoInflateOptions(
@@ -14,6 +16,14 @@ internal actual class PlatformInflater actual constructor() {
         )
         inflater = Inflate(opts)
         drain.reset()
+        lastNowrap = nowrap
+        lastGzip = gzip
+    }
+
+    actual fun reset() {
+        // pako's Inflate has no reset; recreate with the original options.
+        if (inflater == null) throw IllegalStateException("Inflater not initialized")
+        init(lastNowrap, lastGzip)
     }
 
     actual fun inflate(

@@ -13,6 +13,11 @@ internal expect class PlatformInflater() {
      * @param gzip true for gzip wrapping (overrides nowrap)
      */
     fun init(nowrap: Boolean = true, gzip: Boolean = false)
+    /**
+     * Reset to a fresh-stream state, preserving the wrapping mode set by [init].
+     * Used to decode concatenated gzip members (RFC 1952 §2.2).
+     */
+    fun reset()
     fun inflate(
         input: ByteArray, inputOffset: Int, inputLen: Int,
         output: ByteArray, outputOffset: Int, outputLen: Int,

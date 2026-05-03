@@ -48,20 +48,34 @@ actual class GzipInputStream actual constructor(private val input: InputStream) 
             val result = inflater.inflate(inputBuf, inputBufPos, available, b, off, len)
             inputBufPos += result.bytesConsumed
 
-            if (result.bytesProduced > 0) {
-                if (result.streamEnd) eof = true
-                return result.bytesProduced
-            }
             if (result.streamEnd) {
-                eof = true
-                return -1
+                // Member finished. Check whether more data follows — RFC 1952 §2.2
+                // permits concatenated members and standard tools (gunzip, java.util.zip)
+                // decode them all.
+                if (inputBufPos == inputBufLen) {
+                    val n = input.read(inputBuf, 0, inputBuf.size)
+                    if (n <= 0) {
+                        eof = true
+                        return if (result.bytesProduced > 0) result.bytesProduced else -1
+                    }
+                    inputBufPos = 0
+                    inputBufLen = n
+                }
+                inflater.reset()
+                if (result.bytesProduced > 0) return result.bytesProduced
+                continue
+            }
+
+            if (result.bytesProduced > 0) {
+                return result.bytesProduced
             }
 
             // Produced nothing and not at stream end → need more input.
+            // n == 0 is treated as EOF: a well-behaved InputStream returns -1 at EOF,
+            // but some implementations return 0; without the guard the loop would spin.
             val n = input.read(inputBuf, 0, inputBuf.size)
-            if (n == -1) {
-                eof = true
-                return -1
+            if (n <= 0) {
+                throw Exception("Truncated gzip stream: unexpected EOF before end of compressed data")
             }
             inputBufPos = 0
             inputBufLen = n

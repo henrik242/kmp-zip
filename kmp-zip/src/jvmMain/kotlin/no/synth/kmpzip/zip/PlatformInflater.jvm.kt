@@ -7,6 +7,10 @@ internal actual class PlatformInflater actual constructor() {
         jvmInflater = java.util.zip.Inflater(nowrap && !gzip)
     }
 
+    actual fun reset() {
+        jvmInflater?.reset()
+    }
+
     actual fun inflate(
         input: ByteArray, inputOffset: Int, inputLen: Int,
         output: ByteArray, outputOffset: Int, outputLen: Int,
