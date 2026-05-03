@@ -38,12 +38,15 @@ internal actual class PlatformInflater actual constructor() {
         val s = stream ?: return InflateResult(0, 0, true)
         if (finished) return InflateResult(0, 0, true)
 
-        val inPin = input.pin()
-        val outPin = output.pin()
+        // Pinned.addressOf throws ArrayIndexOutOfBoundsException when offset == array.size,
+        // so skip pinning entirely when length is zero. zlib ignores next_in/next_out when
+        // the corresponding avail_* is zero.
+        val inPin = if (inputLen > 0) input.pin() else null
+        val outPin = if (outputLen > 0) output.pin() else null
         return try {
-            s.next_in = toUBytePointer(inPin, inputOffset)
+            s.next_in = if (inPin != null) toUBytePointer(inPin, inputOffset) else null
             s.avail_in = inputLen.toUInt()
-            s.next_out = toUBytePointer(outPin, outputOffset)
+            s.next_out = if (outPin != null) toUBytePointer(outPin, outputOffset) else null
             s.avail_out = outputLen.toUInt()
 
             val ret = inflate(s.ptr, Z_NO_FLUSH)
@@ -57,8 +60,8 @@ internal actual class PlatformInflater actual constructor() {
 
             InflateResult(bytesConsumed, bytesProduced, finished)
         } finally {
-            inPin.unpin()
-            outPin.unpin()
+            inPin?.unpin()
+            outPin?.unpin()
         }
     }
 

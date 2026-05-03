@@ -58,6 +58,22 @@ class GzipStreamTest {
     }
 
     @Test
+    fun roundTripIncompressibleDataAcrossInputBufferBoundary() {
+        // Pseudo-random data won't compress, so the gzipped size is large enough that
+        // GzipInputStream's 8192-byte input buffer is consumed multiple times — and at
+        // some point the buffer ends exactly aligned to a read boundary, triggering an
+        // inflate() call with inputOffset == buffer.size.
+        var seed = 0x12345678
+        val original = ByteArray(200_000) {
+            seed = seed * 1103515245 + 12345
+            (seed ushr 16).toByte()
+        }
+        val compressed = gzipCompress(original)
+        val decompressed = gzipDecompress(compressed)
+        assertContentEquals(original, decompressed)
+    }
+
+    @Test
     fun compressedSmallerThanOriginalForRepetitiveData() {
         val original = "AAAAAAAAAA".repeat(1000).encodeToByteArray()
         val compressed = gzipCompress(original)
