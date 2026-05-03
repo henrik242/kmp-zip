@@ -38,32 +38,26 @@ internal actual class PlatformDeflater actual constructor() {
     ): DeflateResult {
         val s = stream ?: throw IllegalStateException("Deflater not initialized")
 
-        val outPin = output.pin()
-        val inPin = if (inputLen > 0) input.pin() else null
-        return try {
-            if (inPin != null) {
-                s.next_in = toUBytePointer(inPin, inputOffset)
-            } else {
-                s.next_in = null
+        return withPinned(input, inputOffset, inputLen) { inPtr ->
+            withPinned(output, outputOffset, outputLen) { outPtr ->
+                s.next_in = inPtr
+                s.avail_in = inputLen.toUInt()
+                s.next_out = outPtr
+                s.avail_out = outputLen.toUInt()
+
+                val flush = if (finish) Z_FINISH else Z_NO_FLUSH
+                val ret = deflate(s.ptr, flush)
+                if (ret != Z_OK && ret != Z_STREAM_END && ret != Z_BUF_ERROR) {
+                    finished = true
+                    throw IllegalStateException("deflate failed: $ret")
+                }
+
+                val bytesConsumed = inputLen - s.avail_in.toInt()
+                val bytesProduced = outputLen - s.avail_out.toInt()
+                finished = ret == Z_STREAM_END
+
+                DeflateResult(bytesConsumed, bytesProduced, finished)
             }
-            s.avail_in = inputLen.toUInt()
-            s.next_out = toUBytePointer(outPin, outputOffset)
-            s.avail_out = outputLen.toUInt()
-
-            val flush = if (finish) Z_FINISH else Z_NO_FLUSH
-            val ret = deflate(s.ptr, flush)
-            if (ret != Z_OK && ret != Z_STREAM_END && ret != Z_BUF_ERROR) {
-                throw IllegalStateException("deflate failed: $ret")
-            }
-
-            val bytesConsumed = inputLen - s.avail_in.toInt()
-            val bytesProduced = outputLen - s.avail_out.toInt()
-            finished = ret == Z_STREAM_END
-
-            DeflateResult(bytesConsumed, bytesProduced, finished)
-        } finally {
-            inPin?.unpin()
-            outPin.unpin()
         }
     }
 

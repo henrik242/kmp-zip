@@ -30,7 +30,7 @@ internal actual class PlatformInflater actual constructor() {
         input: ByteArray, inputOffset: Int, inputLen: Int,
         output: ByteArray, outputOffset: Int, outputLen: Int,
     ): InflateResult {
-        val inf = inflater ?: return InflateResult(0, 0, true)
+        val inf = inflater ?: throw IllegalStateException("Inflater not initialized")
         if (drain.isStreamEnd(inf.result)) return InflateResult(0, 0, true)
 
         var produced = drain.draw(inf.chunks, inf.result, output, outputOffset, outputLen)

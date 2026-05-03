@@ -15,7 +15,7 @@ internal actual class PlatformInflater actual constructor() {
         input: ByteArray, inputOffset: Int, inputLen: Int,
         output: ByteArray, outputOffset: Int, outputLen: Int,
     ): InflateResult {
-        val inf = jvmInflater ?: return InflateResult(0, 0, true)
+        val inf = jvmInflater ?: throw IllegalStateException("Inflater not initialized")
         if (inf.finished()) return InflateResult(0, 0, true)
 
         val bytesReadBefore = inf.bytesRead

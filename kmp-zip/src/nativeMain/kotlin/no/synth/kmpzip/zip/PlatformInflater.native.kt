@@ -42,33 +42,30 @@ internal actual class PlatformInflater actual constructor() {
         input: ByteArray, inputOffset: Int, inputLen: Int,
         output: ByteArray, outputOffset: Int, outputLen: Int,
     ): InflateResult {
-        val s = stream ?: return InflateResult(0, 0, true)
+        val s = stream ?: throw IllegalStateException("Inflater not initialized")
         if (finished) return InflateResult(0, 0, true)
 
-        // Pinned.addressOf throws ArrayIndexOutOfBoundsException when offset == array.size,
-        // so skip pinning entirely when length is zero. zlib ignores next_in/next_out when
-        // the corresponding avail_* is zero.
-        val inPin = if (inputLen > 0) input.pin() else null
-        val outPin = if (outputLen > 0) output.pin() else null
-        return try {
-            s.next_in = if (inPin != null) toUBytePointer(inPin, inputOffset) else null
-            s.avail_in = inputLen.toUInt()
-            s.next_out = if (outPin != null) toUBytePointer(outPin, outputOffset) else null
-            s.avail_out = outputLen.toUInt()
+        return withPinned(input, inputOffset, inputLen) { inPtr ->
+            withPinned(output, outputOffset, outputLen) { outPtr ->
+                s.next_in = inPtr
+                s.avail_in = inputLen.toUInt()
+                s.next_out = outPtr
+                s.avail_out = outputLen.toUInt()
 
-            val ret = inflate(s.ptr, Z_NO_FLUSH)
-            if (ret != Z_OK && ret != Z_STREAM_END && ret != Z_BUF_ERROR) {
-                throw IllegalStateException("inflate failed: $ret")
+                val ret = inflate(s.ptr, Z_NO_FLUSH)
+                if (ret != Z_OK && ret != Z_STREAM_END && ret != Z_BUF_ERROR) {
+                    // Mark finished so subsequent calls don't re-enter zlib in a
+                    // corrupted state; the caller is expected to close() us.
+                    finished = true
+                    throw IllegalStateException("inflate failed: $ret")
+                }
+
+                val bytesConsumed = inputLen - s.avail_in.toInt()
+                val bytesProduced = outputLen - s.avail_out.toInt()
+                finished = ret == Z_STREAM_END
+
+                InflateResult(bytesConsumed, bytesProduced, finished)
             }
-
-            val bytesConsumed = inputLen - s.avail_in.toInt()
-            val bytesProduced = outputLen - s.avail_out.toInt()
-            finished = ret == Z_STREAM_END
-
-            InflateResult(bytesConsumed, bytesProduced, finished)
-        } finally {
-            inPin?.unpin()
-            outPin?.unpin()
         }
     }
 
