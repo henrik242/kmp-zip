@@ -31,17 +31,53 @@ on:
         description: Number of timed trials per measurement (min wins)
         type: string
         default: "3"
+  release:
+    types: [published]
 
 jobs:
   setup:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.gen.outputs.matrix }}
+      source: ${{ steps.params.outputs.source }}
+      release_tag: ${{ steps.params.outputs.release_tag }}
+      sizes: ${{ steps.params.outputs.sizes }}
+      trials: ${{ steps.params.outputs.trials }}
+      platforms: ${{ steps.params.outputs.platforms }}
     steps:
+      - id: params
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_SOURCE: ${{ inputs.source }}
+          INPUT_TAG: ${{ inputs.release_tag }}
+          INPUT_SIZES: ${{ inputs.sizes }}
+          INPUT_TRIALS: ${{ inputs.trials }}
+          INPUT_PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          # On release events, source is fixed to 'release' and the tag is the
+          # just-published release; on workflow_dispatch we honor the inputs.
+          if [ "$EVENT_NAME" = "release" ]; then
+            source="release"
+            release_tag="${EVENT_TAG:-latest}"
+          else
+            source="${INPUT_SOURCE:-ci}"
+            release_tag="${INPUT_TAG:-latest}"
+          fi
+          {
+            echo "source=$source"
+            echo "release_tag=$release_tag"
+            echo "sizes=${INPUT_SIZES:-text:50M,rand:30M,zero:50M}"
+            echo "trials=${INPUT_TRIALS:-3}"
+            echo "platforms=${INPUT_PLATFORMS:-all}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved: source=$source tag=$release_tag platforms=${INPUT_PLATFORMS:-all}"
+
       - id: gen
         shell: bash
         env:
-          PLATFORMS: ${{ inputs.platforms }}
+          PLATFORMS: ${{ steps.params.outputs.platforms }}
         run: |
           all='[
             {"os":"ubuntu-latest","artifact":"kmpzip-linux-x64","bin":"bin/kmpzip-linux-x64","platform":"linux"},
@@ -72,12 +108,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Fetch kmpzip from ${{ inputs.source }}
+      - name: Fetch kmpzip from ${{ needs.setup.outputs.source }}
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE: ${{ inputs.source }}
-          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE: ${{ needs.setup.outputs.source }}
+          RELEASE_TAG: ${{ needs.setup.outputs.release_tag }}
           ARTIFACT: ${{ matrix.artifact }}
         run: |
           set -e
@@ -158,8 +194,8 @@ jobs:
       - name: Run benchmark
         shell: bash
         env:
-          SIZES: ${{ inputs.sizes }}
-          TRIALS: ${{ inputs.trials }}
+          SIZES: ${{ needs.setup.outputs.sizes }}
+          TRIALS: ${{ needs.setup.outputs.trials }}
           KMPZIP: ${{ matrix.bin }}
           TOOL_ARGS: ${{ steps.tools.outputs.args }}
         run: |
@@ -183,7 +219,7 @@ jobs:
           if-no-files-found: error
 
   summary:
-    needs: bench
+    needs: [setup, bench]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -195,12 +231,22 @@ jobs:
 
       - name: Render summary
         shell: bash
+        env:
+          SOURCE: ${{ needs.setup.outputs.source }}
+          RELEASE_TAG: ${{ needs.setup.outputs.release_tag }}
+          SIZES: ${{ needs.setup.outputs.sizes }}
+          TRIALS: ${{ needs.setup.outputs.trials }}
+          PLATFORMS: ${{ needs.setup.outputs.platforms }}
         run: |
           {
             echo "# kmpzip vs gzip — perf summary"
             echo
-            echo "Source: \`${{ inputs.source }}\`${{ inputs.source == 'release' && format(' (tag: `{0}`)', inputs.release_tag) || '' }}"
-            echo "Sizes: \`${{ inputs.sizes }}\` · trials: ${{ inputs.trials }} · platforms: ${{ inputs.platforms }}"
+            if [ "$SOURCE" = "release" ]; then
+              echo "Source: \`release\` (tag: \`$RELEASE_TAG\`)"
+            else
+              echo "Source: \`$SOURCE\`"
+            fi
+            echo "Sizes: \`$SIZES\` · trials: $TRIALS · platforms: $PLATFORMS"
             echo
             for f in results/*/perf-*.txt; do
               [ -f "$f" ] || continue
