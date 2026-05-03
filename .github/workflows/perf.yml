@@ -110,17 +110,50 @@ jobs:
         run: |
           "./${{ matrix.bin }}" help || true
 
-      - name: Locate gzip
-        id: gzip
+      - name: Install reference tools (macOS)
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: brew install gzip   # GNU gzip alongside the BSD /usr/bin/gzip
+
+      - name: Install reference tools (Windows)
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: choco install zip unzip -y --no-progress
+
+      - name: Compose tool arguments
+        id: tools
         shell: bash
         run: |
-          path=$(command -v gzip || true)
-          if [ -z "$path" ]; then
-            echo "ERROR: gzip not on PATH" >&2
-            exit 1
-          fi
-          echo "path=$path" >> "$GITHUB_OUTPUT"
-          gzip --version 2>&1 | head -1 || true
+          set -e
+          case "${{ matrix.platform }}" in
+            linux)
+              gzips=( "--gzip" "gnu=$(command -v gzip)" )
+              zips=( "--zip" "system=$(command -v zip):$(command -v unzip)" )
+              ;;
+            macos)
+              gzips=( "--gzip" "apple=/usr/bin/gzip" "--gzip" "gnu=/opt/homebrew/bin/gzip" )
+              zips=( "--zip" "system=/usr/bin/zip:/usr/bin/unzip" )
+              ;;
+            windows)
+              gzips=( "--gzip" "gnu=$(command -v gzip)" )
+              zips=( "--zip" "system=$(command -v zip):$(command -v unzip)" )
+              ;;
+          esac
+          # Encode as a single line; bash split happens in the bench step
+          printf 'args=%s\n' "${gzips[*]} ${zips[*]}" >> "$GITHUB_OUTPUT"
+          echo "Composed: ${gzips[*]} ${zips[*]}"
+          # Sanity-check binaries exist
+          for arg in "${gzips[@]}" "${zips[@]}"; do
+            case "$arg" in
+              --gzip|--zip) continue ;;
+            esac
+            paths="${arg#*=}"
+            for p in ${paths//:/ }; do
+              if ! command -v "$p" >/dev/null 2>&1 && [ ! -x "$p" ]; then
+                echo "WARN: tool not found or not executable: $p"
+              fi
+            done
+          done
 
       - name: Run benchmark
         shell: bash
@@ -128,12 +161,13 @@ jobs:
           SIZES: ${{ inputs.sizes }}
           TRIALS: ${{ inputs.trials }}
           KMPZIP: ${{ matrix.bin }}
-          GZIP_PATH: ${{ steps.gzip.outputs.path }}
+          TOOL_ARGS: ${{ steps.tools.outputs.args }}
         run: |
           mkdir -p perf-results
+          # shellcheck disable=SC2086 # word-splitting on TOOL_ARGS is intentional
           python perf/perf.py \
             --kmpzip "$KMPZIP" \
-            --gzip "$GZIP_PATH" \
+            $TOOL_ARGS \
             --workdir perf-work \
             --sizes "$SIZES" \
             --trials "$TRIALS" \

@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""kmpzip vs gzip perf bench — Linux/macOS/Windows.
+"""kmpzip vs system tools — perf bench (Linux/macOS/Windows).
 
 Usage:
-    python3 perf/perf.py --kmpzip /path/to/kmpzip [--gzip gzip] \\
+    python3 perf/perf.py \\
+        --kmpzip /path/to/kmpzip \\
+        --gzip apple=/usr/bin/gzip --gzip gnu=/opt/homebrew/bin/gzip \\
+        --zip system=/usr/bin/zip:/usr/bin/unzip \\
         [--sizes text:50M,rand:30M] [--trials 3] [--json-out perf.json]
 
-Generates synthetic corpora, validates round-trip correctness in both directions
-(kmpzip-compressed -> gzip-decompressed and gzip-compressed -> kmpzip-decompressed),
-then runs N timed trials of compression and decompression and reports min wall-clock.
+Generates synthetic corpora, validates per-tool round-trip correctness, then
+runs N timed trials of compress + decompress for each tool. Reports min
+wall-clock. Two families:
+  - gzip: each --gzip entry plus kmpzip's `gzip`/`gunzip` modes
+  - zip:  each --zip entry plus kmpzip's `create`/`extract` modes
 """
 import argparse
-import filecmp
 import json
 import os
 import platform
@@ -20,13 +24,22 @@ import sys
 import time
 from pathlib import Path
 
+# Windows console is cp1252 by default; force UTF-8 so any unicode in output
+# (arrows, set-membership glyphs, etc.) doesn't crash on encoding.
+for stream in (sys.stdout, sys.stderr):
+    try:
+        stream.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
 
 SIZE_SUFFIX = {"K": 1024, "M": 1024**2, "G": 1024**3}
 
 
+# ---- corpora -----------------------------------------------------------------
+
 def parse_size(s: str) -> int:
     s = s.strip()
-    if s[-1].upper() in SIZE_SUFFIX:
+    if s and s[-1].upper() in SIZE_SUFFIX:
         return int(s[:-1]) * SIZE_SUFFIX[s[-1].upper()]
     return int(s)
 
@@ -34,7 +47,7 @@ def parse_size(s: str) -> int:
 def make_corpus(path: Path, kind: str, size: int) -> None:
     if path.exists() and path.stat().st_size == size:
         return
-    chunk = 1 << 20  # 1 MiB
+    chunk = 1 << 20
     if kind == "rand":
         with path.open("wb") as f:
             remaining = size
@@ -43,15 +56,14 @@ def make_corpus(path: Path, kind: str, size: int) -> None:
                 f.write(os.urandom(n))
                 remaining -= n
     elif kind == "zero":
+        buf = b"\x00" * chunk
         with path.open("wb") as f:
-            buf = b"\x00" * chunk
             remaining = size
             while remaining > 0:
                 n = min(chunk, remaining)
                 f.write(buf[:n])
                 remaining -= n
     elif kind == "text":
-        # Repeating English-ish words. Try /usr/share/dict/words; fall back to a small list.
         words = None
         for cand in ("/usr/share/dict/words", "/usr/share/dict/american-english"):
             p = Path(cand)
@@ -79,24 +91,26 @@ def make_corpus(path: Path, kind: str, size: int) -> None:
         raise ValueError(f"unknown corpus kind: {kind}")
 
 
+# ---- timing ------------------------------------------------------------------
+
 def time_run(argv, cwd=None) -> tuple[float, int, str]:
     t0 = time.perf_counter()
-    r = subprocess.run(argv, cwd=cwd, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.PIPE)
+    r = subprocess.run(argv, cwd=cwd,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     return time.perf_counter() - t0, r.returncode, r.stderr.decode("utf-8", "replace")
 
 
-def bench_min(prep, argv, trials: int, cwd=None) -> tuple[float, int]:
-    """Run prep() (untimed) then argv (timed) `trials` times. Return (min_secs, last_rc)."""
+def bench_min(prep, argv, trials: int, cwd=None) -> tuple[float, int, str]:
     best = None
     last_rc = 0
+    last_err = ""
     for _ in range(trials):
         prep()
-        t, rc, _ = time_run(argv, cwd=cwd)
-        last_rc = rc
+        t, rc, err = time_run(argv, cwd=cwd)
+        last_rc, last_err = rc, err
         if best is None or t < best:
             best = t
-    return best or 0.0, last_rc
+    return best or 0.0, last_rc, last_err
 
 
 def warm_cache(path: Path) -> None:
@@ -105,52 +119,9 @@ def warm_cache(path: Path) -> None:
             pass
 
 
-def gzip_compress(gzip_bin: str, src: Path) -> Path:
-    """Run `gzip -kf src` -> src.gz. Returns the .gz path."""
-    out = src.with_suffix(src.suffix + ".gz")
-    if out.exists():
-        out.unlink()
-    subprocess.run([gzip_bin, "-kf", str(src)], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return out
-
-
-def gzip_decompress(gzip_bin: str, src_gz: Path) -> Path:
-    """Run `gzip -df src.gz` -> src. Returns the decompressed path."""
-    if str(src_gz).endswith(".gz"):
-        out = Path(str(src_gz)[:-3])
-    else:
-        out = src_gz.with_suffix("")
-    if out.exists():
-        out.unlink()
-    subprocess.run([gzip_bin, "-df", str(src_gz)], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return out
-
-
-def kmpzip_compress(kmpzip_bin: str, src: Path) -> Path:
-    out = src.with_suffix(src.suffix + ".gz")
-    if out.exists():
-        out.unlink()
-    subprocess.run([kmpzip_bin, "gzip", str(src)], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return out
-
-
-def kmpzip_decompress(kmpzip_bin: str, src_gz: Path) -> Path:
-    if str(src_gz).endswith(".gz"):
-        out = Path(str(src_gz)[:-3])
-    else:
-        out = src_gz.with_suffix("")
-    if out.exists():
-        out.unlink()
-    subprocess.run([kmpzip_bin, "gunzip", str(src_gz)], check=True,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return out
-
+# ---- helpers -----------------------------------------------------------------
 
 def first_diff_offset(a: Path, b: Path) -> int | None:
-    """Return offset of first byte difference, or None if identical (sizes also compared)."""
     sa, sb = a.stat().st_size, b.stat().st_size
     if sa != sb:
         return min(sa, sb)
@@ -169,60 +140,6 @@ def first_diff_offset(a: Path, b: Path) -> int | None:
             offset += len(ba)
 
 
-def correctness_check(work: Path, original: Path, gzip_bin: str, kmpzip_bin: str,
-                       label: str) -> dict:
-    """One round-trip pair: kmpzip-compress + gzip-decompress, AND gzip-compress + kmpzip-decompress.
-    Returns dict with results."""
-    results = {}
-
-    # kmpzip → gzip
-    k_in = work / f"k_{label}.dat"
-    shutil.copy(original, k_in)
-    try:
-        k_gz = kmpzip_compress(kmpzip_bin, k_in)
-        k_out = work / f"k_{label}_out.dat"
-        if k_out.exists():
-            k_out.unlink()
-        # decompress to a side file using stdout: gzip -dc
-        with k_out.open("wb") as f:
-            subprocess.run([gzip_bin, "-dc", str(k_gz)], check=True,
-                           stdout=f, stderr=subprocess.DEVNULL)
-        diff = first_diff_offset(original, k_out)
-        results["kz_to_gz"] = "OK" if diff is None else f"FAIL@{diff}"
-    except Exception as e:
-        results["kz_to_gz"] = f"ERROR: {e}"
-    finally:
-        for p in (k_in, k_in.with_suffix(k_in.suffix + ".gz"),
-                   work / f"k_{label}_out.dat"):
-            if p.exists():
-                p.unlink()
-
-    # gzip → kmpzip
-    g_in = work / f"g_{label}.dat"
-    shutil.copy(original, g_in)
-    try:
-        g_gz = gzip_compress(gzip_bin, g_in)
-        # kmpzip writes the decompressed file as the .gz minus extension
-        # but we want a stable side path: copy g_gz to t.gz, then kmpzip gunzip t.gz -> t
-        t_gz = work / f"t_{label}.gz"
-        shutil.copy(g_gz, t_gz)
-        t_out = work / f"t_{label}"
-        if t_out.exists():
-            t_out.unlink()
-        kmpzip_decompress(kmpzip_bin, t_gz)
-        diff = first_diff_offset(original, t_out)
-        results["gz_to_kz"] = "OK" if diff is None else f"FAIL@{diff}"
-    except Exception as e:
-        results["gz_to_kz"] = f"ERROR: {e}"
-    finally:
-        for p in (g_in, g_in.with_suffix(g_in.suffix + ".gz"),
-                   work / f"t_{label}.gz", work / f"t_{label}"):
-            if p.exists():
-                p.unlink()
-
-    return results
-
-
 def fmt_secs(s: float) -> str:
     return f"{s:.3f}"
 
@@ -231,17 +148,361 @@ def fmt_bytes(n: int) -> str:
     return f"{n:,}"
 
 
+def tool_version(bin_path: str) -> str:
+    if not bin_path or not Path(bin_path).exists() and not shutil.which(bin_path):
+        return f"{bin_path} (not found)"
+    try:
+        r = subprocess.run([bin_path, "--version"],
+                           capture_output=True, text=True, timeout=5)
+        text = (r.stdout or "") + (r.stderr or "")
+        for line in text.splitlines():
+            line = line.strip()
+            if line:
+                return line
+    except Exception as e:
+        return f"version probe failed: {e}"
+    return "unknown"
+
+
+# ---- tool abstraction --------------------------------------------------------
+# A "tool" is a compress + decompress pair for one family.
+# Each tool exposes:
+#   compress(src: Path) -> Path              # returns the produced archive
+#   decompress(archive: Path, work: Path) -> Path  # returns the produced output file
+# Plus a name and family.
+
+def make_gzip_tool(name: str, gzip_bin: str) -> dict:
+    """gzip-family tool: compress in-place, decompress writes file beside .gz"""
+    def compress(src: Path) -> Path:
+        archive = src.with_suffix(src.suffix + ".gz")
+        if archive.exists():
+            archive.unlink()
+        subprocess.run([gzip_bin, "-kf", str(src)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return archive
+
+    def decompress(archive: Path, work: Path) -> Path:
+        # gzip -df strips .gz and produces sibling
+        if archive.suffix != ".gz":
+            raise ValueError(f"expected .gz file, got {archive}")
+        out = archive.with_suffix("")
+        if out.exists():
+            out.unlink()
+        subprocess.run([gzip_bin, "-df", str(archive)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return out
+
+    def compress_argv(src: Path):
+        return [gzip_bin, "-kf", str(src)]
+
+    def decompress_argv(archive: Path):
+        return [gzip_bin, "-df", str(archive)]
+
+    return {"name": name, "family": "gzip", "bin": gzip_bin,
+            "compress": compress, "decompress": decompress,
+            "compress_argv": compress_argv, "decompress_argv": decompress_argv,
+            "version": tool_version(gzip_bin)}
+
+
+def make_kmpzip_gzip_tool(kmpzip_bin: str) -> dict:
+    def compress(src: Path) -> Path:
+        archive = src.with_suffix(src.suffix + ".gz")
+        if archive.exists():
+            archive.unlink()
+        subprocess.run([kmpzip_bin, "gzip", str(src)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return archive
+
+    def decompress(archive: Path, work: Path) -> Path:
+        if archive.suffix != ".gz":
+            raise ValueError(f"expected .gz file, got {archive}")
+        out = archive.with_suffix("")
+        if out.exists():
+            out.unlink()
+        subprocess.run([kmpzip_bin, "gunzip", str(archive)], check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return out
+
+    def compress_argv(src: Path):
+        return [kmpzip_bin, "gzip", str(src)]
+
+    def decompress_argv(archive: Path):
+        return [kmpzip_bin, "gunzip", str(archive)]
+
+    return {"name": "kmpzip", "family": "gzip", "bin": kmpzip_bin,
+            "compress": compress, "decompress": decompress,
+            "compress_argv": compress_argv, "decompress_argv": decompress_argv,
+            "version": tool_version(kmpzip_bin)}
+
+
+def make_zip_tool(name: str, zip_bin: str, unzip_bin: str) -> dict:
+    """zip-family tool: archive holds one entry (the basename of input).
+    decompress extracts into a per-call output dir to avoid collisions."""
+    def compress(src: Path) -> Path:
+        archive = src.with_suffix(src.suffix + ".zip")
+        if archive.exists():
+            archive.unlink()
+        # Run from src.parent so the entry stored is just src.name (no path prefix)
+        subprocess.run([zip_bin, "-q", str(archive.name), str(src.name)],
+                       check=True, cwd=str(src.parent),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return archive
+
+    def decompress(archive: Path, work: Path) -> Path:
+        if archive.suffix != ".zip":
+            raise ValueError(f"expected .zip file, got {archive}")
+        out_dir = work / f"_extract_{archive.stem}"
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        out_dir.mkdir(parents=True)
+        subprocess.run([unzip_bin, "-q", "-o", str(archive), "-d", str(out_dir)],
+                       check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Find the (single) extracted file
+        extracted = list(out_dir.iterdir())
+        if len(extracted) != 1:
+            raise RuntimeError(f"unzip produced {len(extracted)} entries (expected 1)")
+        return extracted[0]
+
+    def compress_argv(src: Path):
+        archive = src.with_suffix(src.suffix + ".zip")
+        return [zip_bin, "-q", str(archive.name), str(src.name)]
+
+    def decompress_argv(archive: Path, out_dir: Path = None):
+        # out_dir set by caller before timing
+        return [unzip_bin, "-q", "-o", str(archive), "-d", str(out_dir)]
+
+    return {"name": name, "family": "zip", "bin": zip_bin, "unzip_bin": unzip_bin,
+            "compress": compress, "decompress": decompress,
+            "compress_argv": compress_argv, "decompress_argv": decompress_argv,
+            "version": tool_version(zip_bin)}
+
+
+def make_kmpzip_zip_tool(kmpzip_bin: str) -> dict:
+    def compress(src: Path) -> Path:
+        archive = src.with_suffix(src.suffix + ".zip")
+        if archive.exists():
+            archive.unlink()
+        # kmpzip create takes archive then files; run from parent so entry is basename
+        subprocess.run([kmpzip_bin, "create", str(archive.name), str(src.name)],
+                       check=True, cwd=str(src.parent),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return archive
+
+    def decompress(archive: Path, work: Path) -> Path:
+        if archive.suffix != ".zip":
+            raise ValueError(f"expected .zip file, got {archive}")
+        out_dir = work / f"_extract_{archive.stem}"
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+        out_dir.mkdir(parents=True)
+        subprocess.run([kmpzip_bin, "extract", "-d", str(out_dir), str(archive)],
+                       check=True,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        extracted = list(out_dir.iterdir())
+        if len(extracted) != 1:
+            raise RuntimeError(f"kmpzip extract produced {len(extracted)} entries (expected 1)")
+        return extracted[0]
+
+    def compress_argv(src: Path):
+        archive = src.with_suffix(src.suffix + ".zip")
+        return [kmpzip_bin, "create", str(archive.name), str(src.name)]
+
+    def decompress_argv(archive: Path, out_dir: Path = None):
+        return [kmpzip_bin, "extract", "-d", str(out_dir), str(archive)]
+
+    return {"name": "kmpzip", "family": "zip", "bin": kmpzip_bin,
+            "compress": compress, "decompress": decompress,
+            "compress_argv": compress_argv, "decompress_argv": decompress_argv,
+            "version": tool_version(kmpzip_bin)}
+
+
+# ---- correctness -------------------------------------------------------------
+
+def correctness_for_tool(work: Path, original: Path, tool: dict, label: str) -> str:
+    """Self-roundtrip: tool.compress + tool.decompress, byte-compare to original."""
+    rt_in = work / f"rt_{tool['name']}_{label}.dat"
+    if rt_in.exists():
+        rt_in.unlink()
+    shutil.copy(original, rt_in)
+    archive = None
+    out_path = None
+    try:
+        archive = tool["compress"](rt_in)
+        out_path = tool["decompress"](archive, work)
+        diff = first_diff_offset(original, out_path)
+        return "OK" if diff is None else f"FAIL@{diff}"
+    except subprocess.CalledProcessError as e:
+        return f"ERROR(rc={e.returncode})"
+    except Exception as e:
+        return f"ERROR({type(e).__name__}: {e})"
+    finally:
+        for p in (rt_in, archive):
+            if p and p.exists():
+                p.unlink()
+        if out_path and out_path.exists():
+            out_path.unlink()
+        # Cleanup any extract dirs
+        for d in work.glob(f"_extract_*"):
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
+
+
+# ---- bench drivers -----------------------------------------------------------
+
+def bench_compression(work: Path, corpora: list, tools: list, trials: int,
+                       results: dict) -> None:
+    """For each input, time each tool's compress on a fresh copy. Records size."""
+    family = tools[0]["family"]
+    name_w = max(len(c["name"]) for c in corpora) + 2
+    print(f"=== Compression ({family}) ===")
+    cols = ["input", "orig"]
+    for t in tools:
+        cols += [f"{t['name']}_size", f"{t['name']}_secs"]
+    header = f"  {'input':<{name_w}} {'orig':>14}"
+    for t in tools:
+        header += f" {t['name']+'_size':>14} {t['name']+'_secs':>10}"
+    print(header)
+
+    for c in corpora:
+        src = c["path"]
+        warm_cache(src)
+        per_input = {"orig_size": c["size"], "tools": {}}
+        line = f"  {c['name']:<{name_w}} {fmt_bytes(c['size']):>14}"
+        for t in tools:
+            work_src = work / f"bc_{t['name']}_{c['name']}"
+            archive_path = None
+
+            def prep():
+                nonlocal archive_path
+                if work_src.exists():
+                    work_src.unlink()
+                shutil.copy(src, work_src)
+                if t["family"] == "gzip":
+                    archive_path = work_src.with_suffix(work_src.suffix + ".gz")
+                else:
+                    archive_path = work_src.with_suffix(work_src.suffix + ".zip")
+                if archive_path.exists():
+                    archive_path.unlink()
+
+            argv = t["compress_argv"](work_src)
+            cwd = str(work_src.parent) if t["family"] == "zip" else None
+            secs, rc, err = bench_min(prep, argv, trials, cwd=cwd)
+            sz = archive_path.stat().st_size if archive_path and archive_path.exists() else -1
+            per_input["tools"][t["name"]] = {"size": sz, "secs": secs, "rc": rc}
+            line += f" {fmt_bytes(sz):>14} {fmt_secs(secs):>10}"
+            # cleanup
+            for p in (work_src, archive_path):
+                if p and p.exists():
+                    p.unlink()
+        results[c["name"]] = per_input
+        print(line)
+    print()
+
+
+def bench_decompression(work: Path, corpora: list, tools: list, trials: int,
+                         results: dict) -> None:
+    """Per input, produce one canonical archive with the FIRST tool, time each
+    tool's decompress."""
+    family = tools[0]["family"]
+    name_w = max(len(c["name"]) for c in corpora) + 2
+    print(f"=== Decompression ({family}) ===")
+    header = f"  {'input':<{name_w}} {'archive_in':>14}"
+    for t in tools:
+        header += f" {t['name']+'_secs':>10}"
+    print(header)
+
+    canonical_tool = tools[0]
+    for c in corpora:
+        src = c["path"]
+        ref_in = work / f"ref_{family}_{c['name']}"
+        if ref_in.exists():
+            ref_in.unlink()
+        shutil.copy(src, ref_in)
+        canonical_archive = canonical_tool["compress"](ref_in)
+        archive_in_size = canonical_archive.stat().st_size
+        warm_cache(canonical_archive)
+        per_input = {"archive_in_size": archive_in_size, "canonical_tool": canonical_tool["name"], "tools": {}}
+        line = f"  {c['name']:<{name_w}} {fmt_bytes(archive_in_size):>14}"
+
+        for t in tools:
+            work_arch = work / f"bd_{t['name']}_{c['name']}{canonical_archive.suffix}"
+            out_dir = work / f"bd_extract_{t['name']}_{c['name']}"
+
+            def prep():
+                if work_arch.exists():
+                    work_arch.unlink()
+                shutil.copy(canonical_archive, work_arch)
+                # gzip removes input on decompress; zip extracts to a dir
+                if t["family"] == "zip":
+                    if out_dir.exists():
+                        shutil.rmtree(out_dir)
+                    out_dir.mkdir(parents=True)
+                else:
+                    sib = work_arch.with_suffix("")
+                    if sib.exists():
+                        sib.unlink()
+
+            if t["family"] == "gzip":
+                argv = t["decompress_argv"](work_arch)
+            else:
+                argv = t["decompress_argv"](work_arch, out_dir)
+
+            secs, rc, err = bench_min(prep, argv, trials)
+            per_input["tools"][t["name"]] = {"secs": secs, "rc": rc}
+            line += f" {fmt_secs(secs):>10}"
+
+            # cleanup
+            if work_arch.exists():
+                work_arch.unlink()
+            sib = work_arch.with_suffix("")
+            if sib.exists():
+                sib.unlink()
+            if out_dir.exists():
+                shutil.rmtree(out_dir, ignore_errors=True)
+
+        # cleanup canonical
+        for p in (ref_in, canonical_archive):
+            if p.exists():
+                p.unlink()
+
+        results[c["name"]] = per_input
+        print(line)
+    print()
+
+
+# ---- argparse parsing helpers -----------------------------------------------
+
+def parse_named_path(spec: str, default_name: str = None) -> tuple[str, str]:
+    """Parse 'name=path' or just 'path' (name defaults to provided default or basename)."""
+    if "=" in spec:
+        name, path = spec.split("=", 1)
+        return name.strip(), path.strip()
+    return (default_name or Path(spec).name or "tool"), spec.strip()
+
+
+def parse_zip_pair(spec: str) -> tuple[str, str, str]:
+    """Parse 'name=zip_path:unzip_path' (name defaults to 'zip')."""
+    name, paths = parse_named_path(spec, default_name="zip")
+    if ":" not in paths:
+        raise SystemExit(f"--zip requires zip_path:unzip_path (got {paths!r})")
+    zip_p, unzip_p = paths.split(":", 1)
+    return name, zip_p.strip(), unzip_p.strip()
+
+
+# ---- main --------------------------------------------------------------------
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--kmpzip", required=True,
-                    help="Path to kmpzip binary")
-    ap.add_argument("--gzip", default="gzip",
-                    help="Path to gzip binary (default: gzip on PATH)")
+    ap.add_argument("--kmpzip", required=True, help="Path to kmpzip binary")
+    ap.add_argument("--gzip", action="append", default=[],
+                    help="gzip tool: 'name=path' or just 'path'. Repeatable.")
+    ap.add_argument("--zip", action="append", default=[], dest="zip_specs",
+                    help="zip tool: 'name=zip_path:unzip_path'. Repeatable.")
     ap.add_argument("--workdir", default="perf-work")
     ap.add_argument("--trials", type=int, default=3)
     ap.add_argument("--sizes", default="text:50M,rand:30M",
-                    help="Comma-separated list of <kind>:<size>, where kind ∈ {text,rand,zero} "
-                         "and size like 1M, 100M, 1G")
+                    help="Comma-separated list of <kind>:<size>, kind in {text,rand,zero}")
     ap.add_argument("--json-out", default=None,
                     help="Optional path to write structured JSON results")
     args = ap.parse_args()
@@ -249,11 +510,26 @@ def main() -> int:
     work = Path(args.workdir).resolve()
     work.mkdir(parents=True, exist_ok=True)
 
-    gzip_bin = shutil.which(args.gzip) or args.gzip
     kmpzip_bin = str(Path(args.kmpzip).resolve())
     if not Path(kmpzip_bin).exists():
         print(f"ERROR: kmpzip binary not found at {kmpzip_bin}", file=sys.stderr)
         return 2
+
+    # Build tool lists per family
+    gzip_tools = []
+    for spec in args.gzip:
+        name, path = parse_named_path(spec, default_name="gzip")
+        resolved = shutil.which(path) or path
+        gzip_tools.append(make_gzip_tool(name, resolved))
+    gzip_tools.append(make_kmpzip_gzip_tool(kmpzip_bin))
+
+    zip_tools = []
+    for spec in args.zip_specs:
+        name, zp, up = parse_zip_pair(spec)
+        zp_r = shutil.which(zp) or zp
+        up_r = shutil.which(up) or up
+        zip_tools.append(make_zip_tool(name, zp_r, up_r))
+    zip_tools.append(make_kmpzip_zip_tool(kmpzip_bin))
 
     # Build corpus list
     corpora = []
@@ -267,41 +543,36 @@ def main() -> int:
         corpora.append({"name": name, "kind": kind, "size": size,
                          "path": work / name})
 
-    def tool_version(bin_path: str) -> str:
-        if not shutil.which(bin_path):
-            return f"{bin_path} (not on PATH)"
-        try:
-            r = subprocess.run([bin_path, "--version"],
-                               capture_output=True, text=True, timeout=5)
-            text = (r.stdout or "") + (r.stderr or "")
-            for line in text.splitlines():
-                line = line.strip()
-                if line:
-                    return line
-        except Exception as e:
-            return f"version probe failed: {e}"
-        return "unknown"
-
     out = {
         "env": {
             "platform": platform.platform(),
             "python": sys.version.split()[0],
             "machine": platform.machine(),
             "system": platform.system(),
-            "gzip": tool_version(gzip_bin),
-            "kmpzip_path": kmpzip_bin,
             "free_disk_bytes": shutil.disk_usage(work).free,
         },
         "trials": args.trials,
         "corpora": [{k: c[k] for k in ("name", "kind", "size")} for c in corpora],
-        "correctness": {},
-        "compression": {},
-        "decompression": {},
+        "tools": {
+            "gzip": [{"name": t["name"], "version": t["version"], "bin": t["bin"]}
+                      for t in gzip_tools],
+            "zip":  [{"name": t["name"], "version": t["version"], "bin": t["bin"]}
+                      for t in zip_tools],
+        },
+        "correctness": {"gzip": {}, "zip": {}},
+        "compression":  {"gzip": {}, "zip": {}},
+        "decompression": {"gzip": {}, "zip": {}},
     }
 
     print("=== Environment ===")
     for k, v in out["env"].items():
         print(f"  {k}: {v}")
+    print(f"  gzip tools:")
+    for t in gzip_tools:
+        print(f"    - {t['name']}: {t['bin']} ({t['version']})")
+    print(f"  zip tools:")
+    for t in zip_tools:
+        print(f"    - {t['name']}: {t['bin']} ({t['version']})")
     print()
 
     print("=== Generating corpora ===")
@@ -310,102 +581,29 @@ def main() -> int:
         make_corpus(c["path"], c["kind"], c["size"])
     print()
 
-    print("=== Correctness ===")
     overall_ok = True
-    for c in corpora:
-        r = correctness_check(work, c["path"], gzip_bin, kmpzip_bin, c["name"])
-        out["correctness"][c["name"]] = r
-        ok = all(v == "OK" for v in r.values())
-        overall_ok = overall_ok and ok
-        print(f"  {c['name']}  kz→gz: {r['kz_to_gz']}   gz→kz: {r['gz_to_kz']}")
-    print()
 
-    print("=== Compression ===")
-    print(f"  {'input':<20} {'orig':>14} {'gz_size':>14} {'kz_size':>14} "
-          f"{'gz_secs':>10} {'kz_secs':>10} {'kz/gz':>8}")
-    for c in corpora:
-        src = c["path"]
-        warm_cache(src)
-        # gzip
-        g_work = work / f"g_{c['name']}"
-        def prep_g():
-            shutil.copy(src, g_work)
-            gz = g_work.with_suffix(g_work.suffix + ".gz")
-            if gz.exists():
-                gz.unlink()
-        gz_t, _ = bench_min(prep_g, [gzip_bin, "-kf", str(g_work)], args.trials)
-        gz_size = g_work.with_suffix(g_work.suffix + ".gz").stat().st_size
-        # kmpzip
-        k_work = work / f"k_{c['name']}"
-        def prep_k():
-            shutil.copy(src, k_work)
-            gz = k_work.with_suffix(k_work.suffix + ".gz")
-            if gz.exists():
-                gz.unlink()
-        kz_t, _ = bench_min(prep_k, [kmpzip_bin, "gzip", str(k_work)], args.trials)
-        kz_size = k_work.with_suffix(k_work.suffix + ".gz").stat().st_size
-        ratio = kz_t / gz_t if gz_t > 0 else float("nan")
-        out["compression"][c["name"]] = {
-            "orig_size": c["size"],
-            "gzip": {"size": gz_size, "secs": gz_t},
-            "kmpzip": {"size": kz_size, "secs": kz_t},
-            "kz_over_gz": ratio,
-        }
-        print(f"  {c['name']:<20} {fmt_bytes(c['size']):>14} {fmt_bytes(gz_size):>14} "
-              f"{fmt_bytes(kz_size):>14} {fmt_secs(gz_t):>10} {fmt_secs(kz_t):>10} "
-              f"{ratio:>7.2f}x")
-        # cleanup
-        for p in (g_work, g_work.with_suffix(g_work.suffix + ".gz"),
-                   k_work, k_work.with_suffix(k_work.suffix + ".gz")):
-            if p.exists():
-                p.unlink()
-    print()
+    # --- correctness ----------------------------------------------------------
+    for family, tools in (("gzip", gzip_tools), ("zip", zip_tools)):
+        print(f"=== Correctness ({family}) ===")
+        for c in corpora:
+            row = {}
+            for t in tools:
+                r = correctness_for_tool(work, c["path"], t, c["name"])
+                row[t["name"]] = r
+                if r != "OK":
+                    overall_ok = False
+            out["correctness"][family][c["name"]] = row
+            label = "  ".join(f"{n}: {r}" for n, r in row.items())
+            print(f"  {c['name']:<20} {label}")
+        print()
 
-    print("=== Decompression ===")
-    print(f"  {'input':<20} {'gz_in':>14} {'gz_secs':>10} {'kz_secs':>10} {'kz/gz':>8}")
-    for c in corpora:
-        src = c["path"]
-        # Produce one canonical .gz with system gzip; both tools decompress it.
-        ref = work / f"ref_{c['name']}"
-        shutil.copy(src, ref)
-        ref_gz = gzip_compress(gzip_bin, ref)
-        gz_in = ref_gz.stat().st_size
-        warm_cache(ref_gz)
-
-        # gzip decomp
-        g_gz = work / f"d_g_{c['name']}.gz"
-        def prep_dg():
-            shutil.copy(ref_gz, g_gz)
-            out_path = work / f"d_g_{c['name']}"
-            if out_path.exists():
-                out_path.unlink()
-        gz_d, _ = bench_min(prep_dg, [gzip_bin, "-df", str(g_gz)], args.trials)
-
-        # kmpzip decomp
-        k_gz = work / f"d_k_{c['name']}.gz"
-        def prep_dk():
-            shutil.copy(ref_gz, k_gz)
-            out_path = work / f"d_k_{c['name']}"
-            if out_path.exists():
-                out_path.unlink()
-        kz_d, _ = bench_min(prep_dk, [kmpzip_bin, "gunzip", str(k_gz)], args.trials)
-
-        ratio = kz_d / gz_d if gz_d > 0 else float("nan")
-        out["decompression"][c["name"]] = {
-            "gz_in_size": gz_in,
-            "gzip": {"secs": gz_d},
-            "kmpzip": {"secs": kz_d},
-            "kz_over_gz": ratio,
-        }
-        print(f"  {c['name']:<20} {fmt_bytes(gz_in):>14} "
-              f"{fmt_secs(gz_d):>10} {fmt_secs(kz_d):>10} {ratio:>7.2f}x")
-
-        # cleanup
-        for p in (ref, ref_gz, g_gz, k_gz,
-                   work / f"d_g_{c['name']}", work / f"d_k_{c['name']}"):
-            if p.exists():
-                p.unlink()
-    print()
+    # --- compression / decompression -----------------------------------------
+    for family, tools in (("gzip", gzip_tools), ("zip", zip_tools)):
+        bench_compression(work, corpora, tools, args.trials,
+                          out["compression"][family])
+        bench_decompression(work, corpora, tools, args.trials,
+                            out["decompression"][family])
 
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(out, indent=2, default=str))
