@@ -1,0 +1,179 @@
+name: Performance
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Which platforms to bench
+        type: choice
+        default: all
+        options: [all, linux, macos, windows]
+      source:
+        description: Where to fetch the kmpzip binary from
+        type: choice
+        default: ci
+        options: [ci, release]
+      release_tag:
+        description: Release tag (only used when source=release; "latest" picks the newest)
+        type: string
+        default: latest
+      sizes:
+        description: |
+          Comma-separated <kind>:<size> list, kind ∈ {text,rand,zero}.
+          Examples: "text:50M,rand:30M" or "text:100M,rand:100M,zero:500M"
+        type: string
+        default: text:50M,rand:30M,zero:50M
+      trials:
+        description: Number of timed trials per measurement (min wins)
+        type: string
+        default: "3"
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+    steps:
+      - id: gen
+        shell: bash
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+        run: |
+          all='[
+            {"os":"ubuntu-latest","artifact":"kmpzip-linux-x64","bin":"bin/kmpzip-linux-x64","platform":"linux"},
+            {"os":"macos-latest","artifact":"kmpzip-macos-arm64","bin":"bin/kmpzip-macos-arm64","platform":"macos"},
+            {"os":"windows-latest","artifact":"kmpzip-windows-x64.exe","bin":"bin/kmpzip-windows-x64.exe","platform":"windows"}
+          ]'
+          if [ "$PLATFORMS" = "all" ]; then
+            filtered="$all"
+          else
+            filtered=$(printf '%s' "$all" | python3 -c "import json,os,sys; \
+              data=json.load(sys.stdin); want=os.environ['PLATFORMS']; \
+              print(json.dumps([e for e in data if e['platform']==want]))")
+          fi
+          matrix=$(printf '%s' "$filtered" | python3 -c "import json,sys; print(json.dumps({'include': json.load(sys.stdin)}))")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Selected matrix: $matrix"
+
+  bench:
+    needs: setup
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch kmpzip from ${{ inputs.source }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE: ${{ inputs.source }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          set -e
+          mkdir -p bin
+          if [ "$SOURCE" = "release" ]; then
+            tag="$RELEASE_TAG"
+            if [ "$tag" = "latest" ] || [ -z "$tag" ]; then
+              tag=$(gh release view --json tagName --jq .tagName)
+            fi
+            echo "Downloading $ARTIFACT from release $tag"
+            gh release download "$tag" --pattern "$ARTIFACT" --dir bin/
+          else
+            run_id=$(gh run list --workflow CI --branch main --status success \
+                       --limit 1 --json databaseId --jq '.[0].databaseId')
+            if [ -z "$run_id" ]; then
+              echo "ERROR: no successful CI run found on main" >&2
+              exit 1
+            fi
+            echo "Downloading $ARTIFACT from CI run $run_id"
+            gh run download "$run_id" --name "$ARTIFACT" --dir bin/
+            # CI uploads the artifact as a directory named $ARTIFACT containing the binary;
+            # download-artifact v7 with archive=false flattens it. gh run download flattens too.
+            ls -la bin/
+          fi
+          chmod +x "${{ matrix.bin }}" 2>/dev/null || true
+          ls -la "${{ matrix.bin }}"
+
+      - name: Verify binary
+        shell: bash
+        run: |
+          "./${{ matrix.bin }}" help || true
+
+      - name: Locate gzip
+        id: gzip
+        shell: bash
+        run: |
+          path=$(command -v gzip || true)
+          if [ -z "$path" ]; then
+            echo "ERROR: gzip not on PATH" >&2
+            exit 1
+          fi
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          gzip --version 2>&1 | head -1 || true
+
+      - name: Run benchmark
+        shell: bash
+        env:
+          SIZES: ${{ inputs.sizes }}
+          TRIALS: ${{ inputs.trials }}
+          KMPZIP: ${{ matrix.bin }}
+          GZIP_PATH: ${{ steps.gzip.outputs.path }}
+        run: |
+          mkdir -p perf-results
+          python perf/perf.py \
+            --kmpzip "$KMPZIP" \
+            --gzip "$GZIP_PATH" \
+            --workdir perf-work \
+            --sizes "$SIZES" \
+            --trials "$TRIALS" \
+            --json-out "perf-results/perf-${{ matrix.platform }}.json" \
+            | tee "perf-results/perf-${{ matrix.platform }}.txt"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: perf-${{ matrix.platform }}
+          path: perf-results/
+          if-no-files-found: error
+
+  summary:
+    needs: bench
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: results/
+          pattern: perf-*
+          merge-multiple: false
+
+      - name: Render summary
+        shell: bash
+        run: |
+          {
+            echo "# kmpzip vs gzip — perf summary"
+            echo
+            echo "Source: \`${{ inputs.source }}\`${{ inputs.source == 'release' && format(' (tag: `{0}`)', inputs.release_tag) || '' }}"
+            echo "Sizes: \`${{ inputs.sizes }}\` · trials: ${{ inputs.trials }} · platforms: ${{ inputs.platforms }}"
+            echo
+            for f in results/*/perf-*.txt; do
+              [ -f "$f" ] || continue
+              echo "## $(basename "$f" .txt)"
+              echo '```'
+              cat "$f"
+              echo '```'
+              echo
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
