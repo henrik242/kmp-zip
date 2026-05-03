@@ -1,6 +1,5 @@
 package no.synth.kmpzip.kotlinx
 
-import kotlinx.io.Buffer
 import kotlinx.io.Source
 import no.synth.kmpzip.io.InputStream
 
@@ -13,15 +12,11 @@ class SourceInputStream(private val source: Source) : InputStream() {
 
     override fun read(b: ByteArray, off: Int, len: Int): Int {
         if (len == 0) return 0
-        if (source.exhausted()) return -1
-        val buffer = Buffer()
-        val bytesRead = source.readAtMostTo(buffer, len.toLong())
-        if (bytesRead == 0L) return -1
-        val count = bytesRead.toInt()
-        for (i in 0 until count) {
-            b[off + i] = buffer.readByte()
-        }
-        return count
+        // kotlinx-io's readAtMostTo(ByteArray, …) does bulk segment copies
+        // (memcpy under the hood), avoiding the per-byte readByte() loop that
+        // dominated cost on multi-MB transfers.
+        val n = source.readAtMostTo(b, off, off + len)
+        return if (n <= 0) -1 else n
     }
 
     override fun available(): Int = 0

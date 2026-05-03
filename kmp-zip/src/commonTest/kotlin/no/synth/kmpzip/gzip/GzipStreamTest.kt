@@ -61,10 +61,11 @@ class GzipStreamTest {
 
     @Test
     fun roundTripIncompressibleDataAcrossInputBufferBoundary() {
-        // Pseudo-random data won't compress, so the gzipped size is large enough that
-        // GzipInputStream's 8192-byte input buffer is consumed multiple times — and at
-        // some point the buffer ends exactly aligned to a read boundary, triggering an
-        // inflate() call with inputOffset == buffer.size.
+        // Incompressible data forces the compressed stream to be much larger than
+        // GzipInputStream's 8192-byte input buffer, so the buffer is refilled many
+        // times. Eventually inflate() is called with inputOffset == inputBufLen
+        // (the empty-slice case) — this previously crashed because addressOf(size)
+        // throws on Kotlin/Native.
         var seed = 0x12345678
         val original = ByteArray(200_000) {
             seed = seed * 1103515245 + 12345

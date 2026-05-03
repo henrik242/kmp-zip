@@ -7,6 +7,13 @@ import no.synth.kmpzip.io.InputStream
  *
  * On JVM, delegates to [java.util.zip.GZIPInputStream].
  * On Native, uses `platform.zlib` with gzip wrapping.
+ *
+ * **Decompression-bomb safety.** This stream does not enforce a maximum
+ * uncompressed size. A small gzip input can expand to gigabytes (a "zip bomb").
+ * When decompressing untrusted input, the caller must bound the work — read in
+ * chunks and stop after a budget, or wrap with a size-limiting input stream.
+ * Do not pass the result of [no.synth.kmpzip.io.readBytes] on this stream
+ * directly to user-controlled archives.
  */
 expect class GzipInputStream(input: InputStream) : InputStream {
     override fun read(): Int

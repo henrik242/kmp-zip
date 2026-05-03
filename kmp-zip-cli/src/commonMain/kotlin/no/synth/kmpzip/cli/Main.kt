@@ -45,7 +45,7 @@ internal fun runCli(args: Array<String>): Int {
             }
         }
     } catch (e: Exception) {
-        printErr("Error: ${e.message}")
+        printErr("Error: ${e.message ?: e::class.simpleName ?: "unknown"}")
         1
     }
 }

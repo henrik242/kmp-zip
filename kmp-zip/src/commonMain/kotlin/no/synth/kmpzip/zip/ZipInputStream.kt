@@ -12,6 +12,13 @@ import no.synth.kmpzip.io.InputStream
  *
  * Supports both WinZip AES encryption and PKWare traditional (legacy) encryption.
  *
+ * **Decompression-bomb safety.** Per-entry uncompressed size is not capped — a
+ * small zip can expand to gigabytes. When reading untrusted archives, bound the
+ * work by reading each entry in chunks against a budget, or by checking
+ * [ZipEntry.size] before reading. Path traversal is the caller's responsibility:
+ * see the kmpzip CLI for an example of validating entry names against a target
+ * directory.
+ *
  * @param input the underlying input stream
  * @param password optional password for decrypting encrypted entries (as UTF-8 bytes)
  */
@@ -614,7 +621,13 @@ class ZipInputStream(
 
         while (true) {
             if (size >= buf.size) {
-                buf = buf.copyOf(buf.size * 2)
+                if (buf.size >= MAX_DATA_DESCRIPTOR_SCAN_BYTES) {
+                    throw Exception(
+                        "AES entry with data descriptor exceeded $MAX_DATA_DESCRIPTOR_SCAN_BYTES " +
+                            "bytes without a valid descriptor — possible malformed or malicious archive"
+                    )
+                }
+                buf = buf.copyOf(minOf(buf.size * 2, MAX_DATA_DESCRIPTOR_SCAN_BYTES))
             }
             val n = readRaw(buf, size, minOf(4096, buf.size - size))
             if (n == -1) break
@@ -683,6 +696,13 @@ class ZipInputStream(
     }
 
     companion object {
+        /**
+         * Hard cap on bytes buffered while scanning for an AES data descriptor.
+         * Bounds memory if a malformed/malicious entry never produces a valid descriptor;
+         * legitimate single AES entries of this size are not in scope for this code path.
+         */
+        private const val MAX_DATA_DESCRIPTOR_SCAN_BYTES = 256 * 1024 * 1024
+
         /** Constant-time byte array comparison to prevent timing attacks. */
         private fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {
             if (a.size != b.size) return false

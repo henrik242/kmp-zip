@@ -112,6 +112,7 @@ internal actual fun pbkdf2HmacSha1(
 
 @OptIn(ExperimentalForeignApi::class)
 internal actual fun secureRandomBytes(size: Int): ByteArray {
+    if (size == 0) return ByteArray(0)
     val bytes = ByteArray(size)
     bytes.usePinned { pinned ->
         val status = SecRandomCopyBytes(kSecRandomDefault, size.toULong(), pinned.addressOf(0))
