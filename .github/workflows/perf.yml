@@ -240,11 +240,15 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
+      # merge-multiple: true so a single matching artifact lands at
+      # results/perf-<platform>.txt regardless of how many platforms ran.
+      # (With the default `false`, a single match flattens into results/
+      # but multiple matches go into results/<name>/, breaking the glob.)
       - uses: actions/download-artifact@v6
         with:
           path: results/
           pattern: perf-*
-          merge-multiple: false
+          merge-multiple: true
 
       - name: Render summary
         shell: bash
@@ -265,7 +269,7 @@ jobs:
             fi
             echo "Sizes: \`$SIZES\` · trials: $TRIALS · platforms: $PLATFORMS"
             echo
-            for f in results/*/perf-*.txt; do
+            for f in results/perf-*.txt; do
               [ -f "$f" ] || continue
               echo "## $(basename "$f" .txt)"
               echo '```'
