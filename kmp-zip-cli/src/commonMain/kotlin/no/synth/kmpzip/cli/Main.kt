@@ -32,8 +32,8 @@ internal fun runCli(args: Array<String>): Int {
     return try {
         when (command) {
             "list", "l" -> { list(remainingArgs); 0 }
-            "extract", "x" -> { extract(remainingArgs); 0 }
-            "create", "c" -> { create(remainingArgs); 0 }
+            "zip", "c" -> { zip(remainingArgs); 0 }
+            "unzip", "x" -> { unzip(remainingArgs); 0 }
             "gzip", "z" -> { gzip(remainingArgs); 0 }
             "gunzip", "u" -> { gunzip(remainingArgs); 0 }
             "help", "-h", "--help" -> { printUsage(); 0 }
@@ -58,8 +58,8 @@ private fun printUsage() {
 
         Commands:
           list,    l   <file.zip>           List ZIP contents
-          extract, x   <file.zip>           Extract ZIP contents
-          create,  c   <file.zip> <files..> Create ZIP from files
+          zip,     c   <file.zip> <files..> Create ZIP from files
+          unzip,   x   <file.zip>           Extract ZIP contents
           gzip,    z   <file>               GZIP compress a file
           gunzip,  u   <file.gz>            GZIP decompress a file
           help                              Show this help
@@ -67,7 +67,7 @@ private fun printUsage() {
         Options:
           -p <password>   Password for encrypted ZIP files
           -d <dir>        Output directory for extraction (default: current dir)
-          --legacy        Use legacy ZipCrypto encryption instead of AES (create only)
+          --legacy        Use legacy ZipCrypto encryption instead of AES (zip only)
     """.trimIndent()
     println(usage)
 }
@@ -183,11 +183,11 @@ private fun list(args: List<String>) {
     }
 }
 
-// -- extract --
+// -- unzip --
 
-private fun extract(args: List<String>) {
+private fun unzip(args: List<String>) {
     val cli = CliArgs(args)
-    require(cli.positional.isNotEmpty()) { "Usage: kmpzip extract <file.zip> [-d dir] [-p password]" }
+    require(cli.positional.isNotEmpty()) { "Usage: kmpzip unzip <file.zip> [-d dir] [-p password]" }
 
     val file = cli.resolve(cli.positional[0])
     require(exists(file)) { "File not found: $file" }
@@ -239,12 +239,12 @@ private fun extract(args: List<String>) {
     }
 }
 
-// -- create --
+// -- zip --
 
-private fun create(args: List<String>) {
+private fun zip(args: List<String>) {
     val cli = CliArgs(args)
     require(cli.positional.size >= 2) {
-        "Usage: kmpzip create <file.zip> [-p password] <files..>"
+        "Usage: kmpzip zip <file.zip> [-p password] <files..>"
     }
 
     val zipFile = cli.resolve(cli.positional[0])

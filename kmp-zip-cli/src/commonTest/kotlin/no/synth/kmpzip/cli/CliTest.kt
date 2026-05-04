@@ -29,14 +29,14 @@ class CliTest {
             writeText(Path(srcDir, "subdir", "nested.txt"), "Nested content")
 
             val zipFile = Path(tmpDir, "test.zip")
-            runCli(arrayOf("create", zipFile.toString(), srcDir.toString()))
+            runCli(arrayOf("zip", zipFile.toString(), srcDir.toString()))
             assertTrue(SystemFileSystem.exists(zipFile))
             assertTrue(fileSize(zipFile) > 0)
 
             runCli(arrayOf("list", zipFile.toString()))
 
             val extractDir = Path(tmpDir, "out").also { SystemFileSystem.createDirectories(it) }
-            runCli(arrayOf("extract", zipFile.toString(), "-d", extractDir.toString()))
+            runCli(arrayOf("unzip", zipFile.toString(), "-d", extractDir.toString()))
 
             val hello = Path(extractDir, "src", "hello.txt")
             assertTrue(SystemFileSystem.exists(hello))
@@ -80,11 +80,11 @@ class CliTest {
             val src = Path(tmpDir, "secret.txt").also { writeText(it, "top secret") }
             val zipFile = Path(tmpDir, "encrypted.zip")
 
-            runCli(arrayOf("create", zipFile.toString(), "-p", "mypass", src.toString()))
+            runCli(arrayOf("zip", zipFile.toString(), "-p", "mypass", src.toString()))
             assertTrue(SystemFileSystem.exists(zipFile))
 
             val extractDir = Path(tmpDir, "out").also { SystemFileSystem.createDirectories(it) }
-            runCli(arrayOf("extract", zipFile.toString(), "-d", extractDir.toString(), "-p", "mypass"))
+            runCli(arrayOf("unzip", zipFile.toString(), "-d", extractDir.toString(), "-p", "mypass"))
 
             val extracted = Path(extractDir, "secret.txt")
             assertTrue(SystemFileSystem.exists(extracted))
@@ -101,11 +101,11 @@ class CliTest {
             val src = Path(tmpDir, "secret.txt").also { writeText(it, "legacy encrypted") }
             val zipFile = Path(tmpDir, "legacy.zip")
 
-            runCli(arrayOf("create", zipFile.toString(), "-p", "pass", "--legacy", src.toString()))
+            runCli(arrayOf("zip", zipFile.toString(), "-p", "pass", "--legacy", src.toString()))
             assertTrue(SystemFileSystem.exists(zipFile))
 
             val extractDir = Path(tmpDir, "out").also { SystemFileSystem.createDirectories(it) }
-            runCli(arrayOf("extract", zipFile.toString(), "-d", extractDir.toString(), "-p", "pass"))
+            runCli(arrayOf("unzip", zipFile.toString(), "-d", extractDir.toString(), "-p", "pass"))
 
             val extracted = Path(extractDir, "secret.txt")
             assertTrue(SystemFileSystem.exists(extracted))
@@ -122,7 +122,7 @@ class CliTest {
             val src = Path(tmpDir, "data.txt").also { writeText(it, "encrypted data here") }
             val zipFile = Path(tmpDir, "encrypted.zip")
 
-            runCli(arrayOf("create", zipFile.toString(), "-p", "pass123", src.toString()))
+            runCli(arrayOf("zip", zipFile.toString(), "-p", "pass123", src.toString()))
             runCli(arrayOf("list", zipFile.toString(), "-p", "pass123"))
         } finally {
             deleteRecursively(tmpDir)
@@ -159,11 +159,11 @@ class CliTest {
             val file2 = Path(tmpDir, "b.txt").also { writeText(it, "bbb") }
             val zipFile = Path(tmpDir, "multi.zip")
 
-            runCli(arrayOf("create", zipFile.toString(), file1.toString(), file2.toString()))
+            runCli(arrayOf("zip", zipFile.toString(), file1.toString(), file2.toString()))
             assertTrue(SystemFileSystem.exists(zipFile))
 
             val extractDir = Path(tmpDir, "out").also { SystemFileSystem.createDirectories(it) }
-            runCli(arrayOf("extract", zipFile.toString(), "-d", extractDir.toString()))
+            runCli(arrayOf("unzip", zipFile.toString(), "-d", extractDir.toString()))
 
             assertEquals("aaa", readText(Path(extractDir, "a.txt")))
             assertEquals("bbb", readText(Path(extractDir, "b.txt")))
@@ -181,10 +181,10 @@ class CliTest {
             writeText(Path(srcDir, "file.txt"), "content")
 
             val zipFile = Path(tmpDir, "dirs.zip")
-            runCli(arrayOf("create", zipFile.toString(), srcDir.toString()))
+            runCli(arrayOf("zip", zipFile.toString(), srcDir.toString()))
 
             val extractDir = Path(tmpDir, "out").also { SystemFileSystem.createDirectories(it) }
-            runCli(arrayOf("extract", zipFile.toString(), "-d", extractDir.toString()))
+            runCli(arrayOf("unzip", zipFile.toString(), "-d", extractDir.toString()))
 
             assertTrue(SystemFileSystem.metadataOrNull(Path(extractDir, "parent", "emptydir"))?.isDirectory == true)
             assertEquals("content", readText(Path(extractDir, "parent", "file.txt")))
@@ -199,9 +199,9 @@ class CliTest {
         try {
             val src = Path(tmpDir, "hello.txt").also { writeText(it, "default dir") }
             val zipFile = Path(tmpDir, "test.zip")
-            runCli(arrayOf("create", zipFile.toString(), src.toString()))
+            runCli(arrayOf("zip", zipFile.toString(), src.toString()))
 
-            runCli(arrayOf("extract", zipFile.toString(), "-d", tmpDir.toString()))
+            runCli(arrayOf("unzip", zipFile.toString(), "-d", tmpDir.toString()))
             assertEquals("default dir", readText(Path(tmpDir, "hello.txt")))
         } finally {
             deleteRecursively(tmpDir)
@@ -274,7 +274,7 @@ class CliTest {
             buildZip(zipFile, mapOf(".hidden" to "hidden", "..twodot" to "twodot"))
 
             val extractDir = Path(tmpDir, "out").also { SystemFileSystem.createDirectories(it) }
-            runCli(arrayOf("extract", zipFile.toString(), "-d", extractDir.toString()))
+            runCli(arrayOf("unzip", zipFile.toString(), "-d", extractDir.toString()))
 
             assertEquals("hidden", readText(Path(extractDir, ".hidden")))
             assertEquals("twodot", readText(Path(extractDir, "..twodot")))
@@ -292,7 +292,7 @@ class CliTest {
             writeText(Path(srcDir, "sub", "deep.txt"), "deep")
 
             val zipFile = Path(tmpDir, "test.zip")
-            runCli(arrayOf("create", zipFile.toString(), srcDir.toString()))
+            runCli(arrayOf("zip", zipFile.toString(), srcDir.toString()))
 
             val entryNames = mutableListOf<String>()
             ZipInputStream(SystemFileSystem.source(zipFile).buffered().asInputStream()).use { zis ->
@@ -336,7 +336,7 @@ class CliTest {
     }
 
     /**
-     * Builds a malicious ZIP, runs extract, and asserts:
+     * Builds a malicious ZIP, runs unzip, and asserts:
      * 1. No file was written outside the intended extraction directory anywhere within
      *    the temp dir (the security guarantee).
      * 2. runCli returned a non-zero exit code so shell composition surfaces the error.
@@ -348,13 +348,13 @@ class CliTest {
             buildZip(zipFile, mapOf(maliciousEntryName to "should not escape"))
 
             val extractDir = Path(tmpDir, "out").also { SystemFileSystem.createDirectories(it) }
-            val code = runCli(arrayOf("extract", zipFile.toString(), "-d", extractDir.toString()))
+            val code = runCli(arrayOf("unzip", zipFile.toString(), "-d", extractDir.toString()))
 
             assertFalse(
                 anyFileContainsContent(tmpDir, "should not escape", excludeZip = zipFile),
                 "Zip-slip escape: malicious payload found on disk for entry '$maliciousEntryName'"
             )
-            assertEquals(1, code, "extract should exit non-zero when entries are skipped")
+            assertEquals(1, code, "unzip should exit non-zero when entries are skipped")
         } finally {
             deleteRecursively(tmpDir)
         }

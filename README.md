@@ -426,8 +426,8 @@ The `./kmpzip` wrapper picks a native binary for the host (`macosArm64`, `linuxX
 | Command | Alias | Description |
 |---------|-------|-------------|
 | `list <file.zip> [-p password]` | `l` | List ZIP contents (method, size, compressed size, name) |
-| `extract <file.zip> [-d dir] [-p password]` | `x` | Extract ZIP contents to a directory |
-| `create <file.zip> [-p password] [--legacy] <files..>` | `c` | Create ZIP from files and directories (recursive) |
+| `unzip <file.zip> [-d dir] [-p password]` | `x` | Extract ZIP contents to a directory |
+| `zip <file.zip> [-p password] [--legacy] <files..>` | `c` | Create ZIP from files and directories (recursive) |
 | `gzip <file>` | `z` | GZIP compress a file (creates `<file>.gz`) |
 | `gunzip <file.gz>` | `u` | GZIP decompress a file |
 | `help` | `-h`, `--help` | Show usage information |
@@ -439,19 +439,19 @@ The `./kmpzip` wrapper picks a native binary for the host (`macosArm64`, `linuxX
 ./kmpzip list archive.zip
 
 # Extract to a specific directory
-./kmpzip extract archive.zip -d output/
+./kmpzip unzip archive.zip -d output/
 
 # Create a ZIP from files and directories
-./kmpzip create archive.zip file.txt src/
+./kmpzip zip archive.zip file.txt src/
 
 # Create an AES-encrypted ZIP (default)
-./kmpzip create secret.zip -p mypassword file.txt
+./kmpzip zip secret.zip -p mypassword file.txt
 
 # Create a legacy ZipCrypto-encrypted ZIP (compatible with macOS Finder, Windows Explorer)
-./kmpzip create compat.zip -p mypassword --legacy file.txt
+./kmpzip zip compat.zip -p mypassword --legacy file.txt
 
 # Extract an encrypted ZIP (auto-detects AES or legacy)
-./kmpzip extract secret.zip -p mypassword -d output/
+./kmpzip unzip secret.zip -p mypassword -d output/
 
 # GZIP compress / decompress
 ./kmpzip gzip largefile.txt

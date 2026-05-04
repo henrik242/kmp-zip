@@ -12,7 +12,7 @@ Generates synthetic corpora, validates per-tool round-trip correctness, then
 runs N timed trials of compress + decompress for each tool. Reports min
 wall-clock. Two families:
   - gzip: each --gzip entry plus kmpzip's `gzip`/`gunzip` modes
-  - zip:  each --zip entry plus kmpzip's `create`/`extract` modes
+  - zip:  each --zip entry plus kmpzip's `zip`/`unzip` modes
 """
 import argparse
 import json
@@ -289,8 +289,8 @@ def make_kmpzip_zip_tool(kmpzip_bin: str) -> dict:
         archive = src.with_suffix(src.suffix + ".zip")
         if archive.exists():
             archive.unlink()
-        # kmpzip create takes archive then files; run from parent so entry is basename
-        subprocess.run([kmpzip_bin, "create", str(archive.name), str(src.name)],
+        # kmpzip zip takes archive then files; run from parent so entry is basename
+        subprocess.run([kmpzip_bin, "zip", str(archive.name), str(src.name)],
                        check=True, cwd=str(src.parent),
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return archive
@@ -302,20 +302,20 @@ def make_kmpzip_zip_tool(kmpzip_bin: str) -> dict:
         if out_dir.exists():
             shutil.rmtree(out_dir)
         out_dir.mkdir(parents=True)
-        subprocess.run([kmpzip_bin, "extract", "-d", str(out_dir), str(archive)],
+        subprocess.run([kmpzip_bin, "unzip", "-d", str(out_dir), str(archive)],
                        check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         extracted = list(out_dir.iterdir())
         if len(extracted) != 1:
-            raise RuntimeError(f"kmpzip extract produced {len(extracted)} entries (expected 1)")
+            raise RuntimeError(f"kmpzip unzip produced {len(extracted)} entries (expected 1)")
         return extracted[0]
 
     def compress_argv(src: Path):
         archive = src.with_suffix(src.suffix + ".zip")
-        return [kmpzip_bin, "create", str(archive.name), str(src.name)]
+        return [kmpzip_bin, "zip", str(archive.name), str(src.name)]
 
     def decompress_argv(archive: Path, out_dir: Path = None):
-        return [kmpzip_bin, "extract", "-d", str(out_dir), str(archive)]
+        return [kmpzip_bin, "unzip", "-d", str(out_dir), str(archive)]
 
     return {"name": "kmpzip", "family": "zip", "bin": kmpzip_bin,
             "compress": compress, "decompress": decompress,
