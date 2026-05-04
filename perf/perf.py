@@ -6,7 +6,7 @@ Usage:
         --kmpzip /path/to/kmpzip \\
         --gzip apple=/usr/bin/gzip --gzip gnu=/opt/homebrew/bin/gzip \\
         --zip system=/usr/bin/zip \\
-        [--sizes text:50M,rand:30M] [--trials 3] [--json-out perf.json]
+        [--sizes text:200M,rand:200M,zero:500M] [--trials 3] [--json-out perf.json]
 
 Generates synthetic corpora, validates per-tool round-trip correctness, then
 runs N timed trials of compress + decompress for each tool. Reports min
@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import platform
+import random
 import shutil
 import subprocess
 import sys
@@ -64,29 +65,27 @@ def make_corpus(path: Path, kind: str, size: int) -> None:
                 f.write(buf[:n])
                 remaining -= n
     elif kind == "text":
-        words = None
-        for cand in ("/usr/share/dict/words", "/usr/share/dict/american-english"):
-            p = Path(cand)
-            if p.exists():
-                try:
-                    words = [w.strip() for w in p.read_text(errors="replace").splitlines() if w.strip()]
-                    if len(words) >= 100:
-                        break
-                except OSError:
-                    pass
-        if not words:
-            words = (
-                "the of and a to in is you that it he was for on are with as I his they be at "
-                "one have this from or had by hot but some what there we can out other were all "
-                "your when up use word how said an each she which do their time if will way about"
-            ).split()
-        block = (" ".join(words[:1000]) + "\n").encode()
+        # Seeded PRNG drawing from an English-frequency wordlist. Reproducible
+        # across platforms — we used to read /usr/share/dict/words, which only
+        # macOS ships in CI, so the text corpus differed across runners and
+        # broke cross-platform comparison.
+        words = (
+            "the of and a to in is you that it he was for on are with as I his they be at "
+            "one have this from or had by hot but some what there we can out other were all "
+            "your when up use word how said an each she which do their time if will way about"
+        ).split()
+        tokens = [w.encode() for w in words]
+        rng = random.Random(0xC0FFEE)
         with path.open("wb") as f:
-            written = 0
-            while written < size:
-                n = min(len(block), size - written)
-                f.write(block[:n])
-                written += n
+            remaining = size
+            while remaining > 0:
+                buf = bytearray()
+                while len(buf) < (1 << 16):
+                    buf.extend(tokens[rng.randrange(len(tokens))])
+                    buf.append(0x0A if rng.random() < 0.06 else 0x20)
+                n = min(len(buf), remaining)
+                f.write(bytes(buf[:n]))
+                remaining -= n
     else:
         raise ValueError(f"unknown corpus kind: {kind}")
 
@@ -156,8 +155,11 @@ def tool_version(bin_path: str) -> str:
     if not binary_present(bin_path):
         return f"{bin_path} (not found)"
     try:
+        # encoding="utf-8" so non-ASCII version strings (em dashes etc.)
+        # don't get mojibaked under Windows' cp1252 default.
         r = subprocess.run([bin_path, "--version"],
-                           capture_output=True, text=True, timeout=5)
+                           capture_output=True, text=True, timeout=5,
+                           encoding="utf-8", errors="replace")
         text = (r.stdout or "") + (r.stderr or "")
         for line in text.splitlines():
             line = line.strip()
@@ -354,6 +356,52 @@ def correctness_for_tool(work: Path, original: Path, tool: dict, label: str) -> 
 
 # ---- bench drivers -----------------------------------------------------------
 
+def _print_relative_summary(results: dict, corpora: list, tools: list, kind: str) -> None:
+    """Per-corpus and mean speedup (compression: + size delta) vs the first tool.
+    speed× > 1 means the tool is faster than the baseline; size% > 0 means its
+    output is larger than the baseline's."""
+    if len(tools) < 2:
+        return
+    base = tools[0]["name"]
+    others = tools[1:]
+    has_size = kind == "compression"
+
+    def short(corpus_name: str) -> str:
+        return corpus_name.rsplit(".", 1)[0]
+
+    cell_w = max(len(short(c["name"])) for c in corpora) + 2
+    label = "speed×/size%" if has_size else "speed×"
+    print(f"  vs {base} ({kind}, {label}):")
+
+    for t in others:
+        speedups, size_deltas, cells = [], [], []
+        for c in corpora:
+            tdata = results.get(c["name"], {}).get("tools", {})
+            bd, td = tdata.get(base, {}), tdata.get(t["name"], {})
+            b_s, t_s = bd.get("secs", 0), td.get("secs", 0)
+            cell = f"{short(c['name']):<{cell_w}}"
+            if b_s > 0 and t_s > 0:
+                sp = b_s / t_s
+                speedups.append(sp)
+                cell += f"{sp:5.2f}×"
+            else:
+                cell += "    —"
+            if has_size:
+                b_sz, t_sz = bd.get("size", 0), td.get("size", 0)
+                if b_sz > 0 and t_sz > 0:
+                    sd = (t_sz / b_sz - 1) * 100
+                    size_deltas.append(sd)
+                    cell += f"/{sd:+6.2f}%"
+                else:
+                    cell += "/      —"
+            cells.append(cell)
+        mean = f"{'mean':<{cell_w}}"
+        mean += f"{sum(speedups)/len(speedups):5.2f}×" if speedups else "    —"
+        if has_size:
+            mean += f"/{sum(size_deltas)/len(size_deltas):+6.2f}%" if size_deltas else "/      —"
+        print(f"    {t['name']:<8}" + "   ".join(cells) + f"   | {mean}")
+
+
 def bench_compression(work: Path, corpora: list, tools: list, trials: int,
                        results: dict) -> None:
     """For each input, time each tool's compress on a fresh copy. Records size."""
@@ -401,6 +449,7 @@ def bench_compression(work: Path, corpora: list, tools: list, trials: int,
                     p.unlink()
         results[c["name"]] = per_input
         print(line)
+    _print_relative_summary(results, corpora, tools, "compression")
     print()
 
 
@@ -472,6 +521,7 @@ def bench_decompression(work: Path, corpora: list, tools: list, trials: int,
 
         results[c["name"]] = per_input
         print(line)
+    _print_relative_summary(results, corpora, tools, "decompression")
     print()
 
 
@@ -513,7 +563,7 @@ def main() -> int:
                     help="zip tool: 'name=zip_path' (unzip inferred as sibling). Repeatable.")
     ap.add_argument("--workdir", default="perf-work")
     ap.add_argument("--trials", type=int, default=3)
-    ap.add_argument("--sizes", default="text:50M,rand:30M",
+    ap.add_argument("--sizes", default="text:200M,rand:200M,zero:500M",
                     help="Comma-separated list of <kind>:<size>, kind in {text,rand,zero}")
     ap.add_argument("--json-out", default=None,
                     help="Optional path to write structured JSON results")

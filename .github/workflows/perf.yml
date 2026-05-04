@@ -24,9 +24,9 @@ on:
       sizes:
         description: |
           Comma-separated <kind>:<size> list, kind ∈ {text,rand,zero}.
-          Examples: "text:50M,rand:30M" or "text:100M,rand:100M,zero:500M"
+          Examples: "text:50M,rand:30M" or "text:200M,rand:200M,zero:500M"
         type: string
-        default: text:50M,rand:30M,zero:50M
+        default: text:200M,rand:200M,zero:500M
       trials:
         description: Number of timed trials per measurement (min wins)
         type: string
@@ -68,7 +68,7 @@ jobs:
           {
             echo "source=$source"
             echo "release_tag=$release_tag"
-            echo "sizes=${INPUT_SIZES:-text:50M,rand:30M,zero:50M}"
+            echo "sizes=${INPUT_SIZES:-text:200M,rand:200M,zero:500M}"
             echo "trials=${INPUT_TRIALS:-3}"
             echo "platforms=${INPUT_PLATFORMS:-all}"
           } >> "$GITHUB_OUTPUT"
