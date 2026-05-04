@@ -494,9 +494,12 @@ def parse_zip_spec(spec: str) -> tuple[str, str, str]:
     nothing) is passed through unchanged — the binary_present filter in main()
     will drop the tool with a warning."""
     name, zip_p = parse_named_path(spec, default_name="zip")
+    zip_p = zip_p.strip()
     zp = Path(zip_p)
-    unzip_p = str(zp.with_name(zp.name.replace("zip", "unzip", 1))) if zp.name else ""
-    return name, zip_p.strip(), unzip_p.strip()
+    if not zp.name:
+        return name, zip_p, ""
+    unzip_p = str(zp.with_name(zp.name.replace("zip", "unzip", 1)))
+    return name, zip_p, unzip_p
 
 
 # ---- main --------------------------------------------------------------------
