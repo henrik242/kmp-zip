@@ -104,7 +104,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -129,7 +129,7 @@ jobs:
       # CI uploads kmpzip with `archive: false` (raw, unzipped). Cross-workflow
       # downloads of those artifacts are broken in both:
       #   - `gh run download` — always tries to unzip, fails on raw bytes
-      #   - actions/download-artifact@v7 — its HTTP client can't auth to the
+      #   - actions/download-artifact@v8 — its HTTP client can't auth to the
       #     redirected SAS blob URL ("download failed after 5 retries")
       # `gh api` follows the redirect with the workflow token and saves the
       # response body as-is, which for archive:false uploads is the raw binary.
@@ -244,7 +244,7 @@ jobs:
       # results/perf-<platform>.txt regardless of how many platforms ran.
       # (With the default `false`, a single match flattens into results/
       # but multiple matches go into results/<name>/, breaking the glob.)
-      - uses: actions/download-artifact@v6
+      - uses: actions/download-artifact@v8
         with:
           path: results/
           pattern: perf-*
