@@ -356,50 +356,17 @@ def correctness_for_tool(work: Path, original: Path, tool: dict, label: str) -> 
 
 # ---- bench drivers -----------------------------------------------------------
 
-def _print_relative_summary(results: dict, corpora: list, tools: list, kind: str) -> None:
-    """Per-corpus and mean speedup (compression: + size delta) vs the first tool.
-    speed× > 1 means the tool is faster than the baseline; size% > 0 means its
-    output is larger than the baseline's."""
-    if len(tools) < 2:
-        return
-    base = tools[0]["name"]
-    others = tools[1:]
-    has_size = kind == "compression"
-
-    def short(corpus_name: str) -> str:
-        return corpus_name.rsplit(".", 1)[0]
-
-    cell_w = max(len(short(c["name"])) for c in corpora) + 2
-    label = "speed×/size%" if has_size else "speed×"
-    print(f"  vs {base} ({kind}, {label}):")
-
-    for t in others:
-        speedups, size_deltas, cells = [], [], []
-        for c in corpora:
-            tdata = results.get(c["name"], {}).get("tools", {})
-            bd, td = tdata.get(base, {}), tdata.get(t["name"], {})
-            b_s, t_s = bd.get("secs", 0), td.get("secs", 0)
-            cell = f"{short(c['name']):<{cell_w}}"
-            if b_s > 0 and t_s > 0:
-                sp = b_s / t_s
-                speedups.append(sp)
-                cell += f"{sp:5.2f}×"
-            else:
-                cell += "    —"
-            if has_size:
-                b_sz, t_sz = bd.get("size", 0), td.get("size", 0)
-                if b_sz > 0 and t_sz > 0:
-                    sd = (t_sz / b_sz - 1) * 100
-                    size_deltas.append(sd)
-                    cell += f"/{sd:+6.2f}%"
-                else:
-                    cell += "/      —"
-            cells.append(cell)
-        mean = f"{'mean':<{cell_w}}"
-        mean += f"{sum(speedups)/len(speedups):5.2f}×" if speedups else "    —"
-        if has_size:
-            mean += f"/{sum(size_deltas)/len(size_deltas):+6.2f}%" if size_deltas else "/      —"
-        print(f"    {t['name']:<8}" + "   ".join(cells) + f"   | {mean}")
+def _kmpzip_vs_cell(per_input: dict, other_name: str, has_size: bool, width: int) -> str:
+    """One right-aligned cell showing kmpzip's speed× (and size%, for compression)
+    relative to `other_name`. >1× speed = kmpzip faster; >0% size = kmpzip larger."""
+    kdata = per_input.get("tools", {}).get("kmpzip", {})
+    odata = per_input.get("tools", {}).get(other_name, {})
+    k_s, o_s = kdata.get("secs", 0), odata.get("secs", 0)
+    cell = f"{o_s / k_s:.2f}×" if k_s > 0 and o_s > 0 else "—"
+    if has_size:
+        k_sz, o_sz = kdata.get("size", 0), odata.get("size", 0)
+        cell += f"/{(k_sz / o_sz - 1) * 100:+.2f}%" if k_sz > 0 and o_sz > 0 else "/—"
+    return f"{cell:>{width}}"
 
 
 def bench_compression(work: Path, corpora: list, tools: list, trials: int,
@@ -407,13 +374,14 @@ def bench_compression(work: Path, corpora: list, tools: list, trials: int,
     """For each input, time each tool's compress on a fresh copy. Records size."""
     family = tools[0]["family"]
     name_w = max(len(c["name"]) for c in corpora) + 2
+    others = [t for t in tools if t["name"] != "kmpzip"]
+    vs_w = 14
     print(f"=== Compression ({family}) ===")
-    cols = ["input", "orig"]
-    for t in tools:
-        cols += [f"{t['name']}_size", f"{t['name']}_secs"]
     header = f"  {'input':<{name_w}} {'orig':>14}"
     for t in tools:
         header += f" {t['name']+'_size':>14} {t['name']+'_secs':>10}"
+    for t in others:
+        header += f" {('vs ' + t['name']):>{vs_w}}"
     print(header)
 
     for c in corpora:
@@ -447,9 +415,10 @@ def bench_compression(work: Path, corpora: list, tools: list, trials: int,
             for p in (work_src, archive_path):
                 if p and p.exists():
                     p.unlink()
+        for t in others:
+            line += f" {_kmpzip_vs_cell(per_input, t['name'], has_size=True, width=vs_w)}"
         results[c["name"]] = per_input
         print(line)
-    _print_relative_summary(results, corpora, tools, "compression")
     print()
 
 
@@ -459,10 +428,14 @@ def bench_decompression(work: Path, corpora: list, tools: list, trials: int,
     tool's decompress."""
     family = tools[0]["family"]
     name_w = max(len(c["name"]) for c in corpora) + 2
+    others = [t for t in tools if t["name"] != "kmpzip"]
+    vs_w = 10
     print(f"=== Decompression ({family}) ===")
     header = f"  {'input':<{name_w}} {'archive_in':>14}"
     for t in tools:
         header += f" {t['name']+'_secs':>10}"
+    for t in others:
+        header += f" {('vs ' + t['name']):>{vs_w}}"
     print(header)
 
     canonical_tool = tools[0]
@@ -519,9 +492,10 @@ def bench_decompression(work: Path, corpora: list, tools: list, trials: int,
             if p.exists():
                 p.unlink()
 
+        for t in others:
+            line += f" {_kmpzip_vs_cell(per_input, t['name'], has_size=False, width=vs_w)}"
         results[c["name"]] = per_input
         print(line)
-    _print_relative_summary(results, corpora, tools, "decompression")
     print()
 
 
