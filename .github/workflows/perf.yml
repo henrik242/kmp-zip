@@ -150,14 +150,16 @@ jobs:
             echo "ERROR: no successful CI run found on main" >&2
             exit 1
           fi
-          artifact_id=$(gh api "/repos/$REPO/actions/runs/$run_id/artifacts" \
+          # No leading slash on the endpoint — Git Bash on Windows rewrites
+          # /repos/... into a filesystem path before gh sees it.
+          artifact_id=$(gh api "repos/$REPO/actions/runs/$run_id/artifacts" \
                           --jq ".artifacts[] | select(.name==\"$ARTIFACT\") | .id")
           if [ -z "$artifact_id" ]; then
             echo "ERROR: artifact $ARTIFACT not found in run $run_id" >&2
             exit 1
           fi
           echo "Downloading $ARTIFACT (id $artifact_id) from CI run $run_id"
-          gh api "/repos/$REPO/actions/artifacts/$artifact_id/zip" > "$BIN"
+          gh api "repos/$REPO/actions/artifacts/$artifact_id/zip" > "$BIN"
           # `gh api` returns 0 even when the redirect lands on an error body
           # (HTML, JSON). A real kmpzip binary is >1 MB on every platform, so
           # a tiny file means we got something other than the executable.
