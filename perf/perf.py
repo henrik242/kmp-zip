@@ -5,7 +5,7 @@ Usage:
     python3 perf/perf.py \\
         --kmpzip /path/to/kmpzip \\
         --gzip apple=/usr/bin/gzip --gzip gnu=/opt/homebrew/bin/gzip \\
-        --zip system=/usr/bin/zip:/usr/bin/unzip \\
+        --zip system=/usr/bin/zip \\
         [--sizes text:50M,rand:30M] [--trials 3] [--json-out perf.json]
 
 Generates synthetic corpora, validates per-tool round-trip correctness, then
@@ -482,11 +482,18 @@ def parse_named_path(spec: str, default_name: str = None) -> tuple[str, str]:
 
 
 def parse_zip_pair(spec: str) -> tuple[str, str, str]:
-    """Parse 'name=zip_path:unzip_path' (name defaults to 'zip')."""
+    """Parse 'name=zip_path' (unzip is inferred as sibling 'unzip[.ext]').
+
+    Splitting on ':' breaks on Windows paths ('C:\\...'), so the explicit
+    override form uses '|': 'name=zip_path|unzip_path'.
+    """
     name, paths = parse_named_path(spec, default_name="zip")
-    if ":" not in paths:
-        raise SystemExit(f"--zip requires zip_path:unzip_path (got {paths!r})")
-    zip_p, unzip_p = paths.split(":", 1)
+    if "|" in paths:
+        zip_p, unzip_p = paths.split("|", 1)
+    else:
+        zip_p = paths
+        zp = Path(zip_p)
+        unzip_p = str(zp.with_name("unzip" + zp.suffix)) if zp.name else "unzip"
     return name, zip_p.strip(), unzip_p.strip()
 
 
@@ -498,7 +505,7 @@ def main() -> int:
     ap.add_argument("--gzip", action="append", default=[],
                     help="gzip tool: 'name=path' or just 'path'. Repeatable.")
     ap.add_argument("--zip", action="append", default=[], dest="zip_specs",
-                    help="zip tool: 'name=zip_path:unzip_path'. Repeatable.")
+                    help="zip tool: 'name=zip_path' (unzip inferred as sibling). Repeatable.")
     ap.add_argument("--workdir", default="perf-work")
     ap.add_argument("--trials", type=int, default=3)
     ap.add_argument("--sizes", default="text:50M,rand:30M",
@@ -515,11 +522,20 @@ def main() -> int:
         print(f"ERROR: kmpzip binary not found at {kmpzip_bin}", file=sys.stderr)
         return 2
 
-    # Build tool lists per family
+    def _binary_present(p: str) -> bool:
+        return bool(p) and (Path(p).exists() or shutil.which(p) is not None)
+
+    # Build tool lists per family. Skip (with a warning) any reference tool
+    # whose binary isn't present — e.g. choco didn't install zip on the runner.
+    # The kmpzip tool itself is always included; we already verified its binary above.
     gzip_tools = []
     for spec in args.gzip:
         name, path = parse_named_path(spec, default_name="gzip")
         resolved = shutil.which(path) or path
+        if not _binary_present(resolved):
+            print(f"WARN: gzip tool {name!r} not found at {path!r}; skipping",
+                  file=sys.stderr)
+            continue
         gzip_tools.append(make_gzip_tool(name, resolved))
     gzip_tools.append(make_kmpzip_gzip_tool(kmpzip_bin))
 
@@ -528,6 +544,11 @@ def main() -> int:
         name, zp, up = parse_zip_pair(spec)
         zp_r = shutil.which(zp) or zp
         up_r = shutil.which(up) or up
+        if not _binary_present(zp_r) or not _binary_present(up_r):
+            print(f"WARN: zip tool {name!r} not found "
+                  f"(zip={zp!r}, unzip={up!r}); skipping",
+                  file=sys.stderr)
+            continue
         zip_tools.append(make_zip_tool(name, zp_r, up_r))
     zip_tools.append(make_kmpzip_zip_tool(kmpzip_bin))
 

@@ -161,18 +161,29 @@ jobs:
         shell: bash
         run: |
           set -e
+          # Note: --zip takes only the zip binary path; perf.py infers the
+          # sibling unzip. Joining zip_path:unzip_path on Windows breaks
+          # because Windows paths contain ':' (e.g. C:/...).
           case "${{ matrix.platform }}" in
             linux)
               gzips=( "--gzip" "gnu=$(command -v gzip)" )
-              zips=( "--zip" "system=$(command -v zip):$(command -v unzip)" )
+              zips=( "--zip" "system=$(command -v zip)" )
               ;;
             macos)
               gzips=( "--gzip" "apple=/usr/bin/gzip" "--gzip" "gnu=/opt/homebrew/bin/gzip" )
-              zips=( "--zip" "system=/usr/bin/zip:/usr/bin/unzip" )
+              zips=( "--zip" "system=/usr/bin/zip" )
               ;;
             windows)
               gzips=( "--gzip" "gnu=$(command -v gzip)" )
-              zips=( "--zip" "system=$(command -v zip):$(command -v unzip)" )
+              zip_path=$(command -v zip || true)
+              if [ -n "$zip_path" ]; then
+                zips=( "--zip" "system=$zip_path" )
+              else
+                # choco may have failed to install zip; perf.py will still
+                # bench kmpzip alone for the zip family.
+                echo "WARN: 'zip' not on PATH; skipping system zip tool"
+                zips=()
+              fi
               ;;
           esac
           # Encode as a single line; bash split happens in the bench step
@@ -183,12 +194,10 @@ jobs:
             case "$arg" in
               --gzip|--zip) continue ;;
             esac
-            paths="${arg#*=}"
-            for p in ${paths//:/ }; do
-              if ! command -v "$p" >/dev/null 2>&1 && [ ! -x "$p" ]; then
-                echo "WARN: tool not found or not executable: $p"
-              fi
-            done
+            p="${arg#*=}"
+            if ! command -v "$p" >/dev/null 2>&1 && [ ! -x "$p" ]; then
+              echo "WARN: tool not found or not executable: $p"
+            fi
           done
 
       - name: Run benchmark
