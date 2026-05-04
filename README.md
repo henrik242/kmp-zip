@@ -458,6 +458,14 @@ The `./kmpzip` wrapper picks a native binary for the host (`macosArm64`, `linuxX
 ./kmpzip gunzip largefile.txt.gz
 ```
 
+### Installing
+
+`kmpzip` is [available through Homebrew](https://github.com/henrik242/homebrew-brew) on macOS and Linux:
+
+```sh
+brew install henrik242/brew/kmpzip
+```
+
 ## Building
 
 Requires JDK 21 and Xcode (for iOS targets).
