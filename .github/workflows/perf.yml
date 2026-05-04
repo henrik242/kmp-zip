@@ -108,38 +108,57 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Fetch kmpzip from ${{ needs.setup.outputs.source }}
+      - name: Download kmpzip (release)
+        if: needs.setup.outputs.source == 'release'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE: ${{ needs.setup.outputs.source }}
           RELEASE_TAG: ${{ needs.setup.outputs.release_tag }}
           ARTIFACT: ${{ matrix.artifact }}
         run: |
           set -e
           mkdir -p bin
-          if [ "$SOURCE" = "release" ]; then
-            tag="$RELEASE_TAG"
-            if [ "$tag" = "latest" ] || [ -z "$tag" ]; then
-              tag=$(gh release view --json tagName --jq .tagName)
-            fi
-            echo "Downloading $ARTIFACT from release $tag"
-            gh release download "$tag" --pattern "$ARTIFACT" --dir bin/
-          else
-            run_id=$(gh run list --workflow CI --branch main --status success \
-                       --limit 1 --json databaseId --jq '.[0].databaseId')
-            if [ -z "$run_id" ]; then
-              echo "ERROR: no successful CI run found on main" >&2
-              exit 1
-            fi
-            echo "Downloading $ARTIFACT from CI run $run_id"
-            gh run download "$run_id" --name "$ARTIFACT" --dir bin/
-            # CI uploads the artifact as a directory named $ARTIFACT containing the binary;
-            # download-artifact v7 with archive=false flattens it. gh run download flattens too.
-            ls -la bin/
+          tag="$RELEASE_TAG"
+          if [ "$tag" = "latest" ] || [ -z "$tag" ]; then
+            tag=$(gh release view --json tagName --jq .tagName)
           fi
+          echo "Downloading $ARTIFACT from release $tag"
+          gh release download "$tag" --pattern "$ARTIFACT" --dir bin/
           chmod +x "${{ matrix.bin }}" 2>/dev/null || true
-          ls -la "${{ matrix.bin }}"
+
+      - name: Find CI run id
+        if: needs.setup.outputs.source == 'ci'
+        id: ci-run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          run_id=$(gh run list --workflow CI --branch main --status success \
+                     --limit 1 --json databaseId --jq '.[0].databaseId')
+          if [ -z "$run_id" ]; then
+            echo "ERROR: no successful CI run found on main" >&2
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      # CI uploads kmpzip binaries with `archive: false` (raw, unzipped). The
+      # `gh run download` CLI always tries to unzip, so it can't fetch them —
+      # actions/download-artifact@v7 understands both archive modes.
+      - name: Download kmpzip (CI)
+        if: needs.setup.outputs.source == 'ci'
+        uses: actions/download-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: bin/
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.ci-run.outputs.run_id }}
+          repository: ${{ github.repository }}
+
+      - name: Make kmpzip executable (CI)
+        if: needs.setup.outputs.source == 'ci'
+        shell: bash
+        run: chmod +x "${{ matrix.bin }}" 2>/dev/null || true
 
       - name: Verify binary
         shell: bash
@@ -161,11 +180,12 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Note: --zip takes only the zip binary path; perf.py infers the
-          # sibling unzip. Joining zip_path:unzip_path on Windows breaks
-          # because Windows paths contain ':' (e.g. C:/...).
+          # --zip takes only the zip path; perf.py infers the sibling unzip.
+          # Splitting zip_path:unzip_path breaks on Windows (C:/... contains ':').
+          # If a tool isn't on PATH (e.g. choco failed) the spec resolves to
+          # an empty path and perf.py warns + skips it.
           case "${{ matrix.platform }}" in
-            linux)
+            linux|windows)
               gzips=( "--gzip" "gnu=$(command -v gzip)" )
               zips=( "--zip" "system=$(command -v zip)" )
               ;;
@@ -173,32 +193,10 @@ jobs:
               gzips=( "--gzip" "apple=/usr/bin/gzip" "--gzip" "gnu=/opt/homebrew/bin/gzip" )
               zips=( "--zip" "system=/usr/bin/zip" )
               ;;
-            windows)
-              gzips=( "--gzip" "gnu=$(command -v gzip)" )
-              zip_path=$(command -v zip || true)
-              if [ -n "$zip_path" ]; then
-                zips=( "--zip" "system=$zip_path" )
-              else
-                # choco may have failed to install zip; perf.py will still
-                # bench kmpzip alone for the zip family.
-                echo "WARN: 'zip' not on PATH; skipping system zip tool"
-                zips=()
-              fi
-              ;;
           esac
           # Encode as a single line; bash split happens in the bench step
           printf 'args=%s\n' "${gzips[*]} ${zips[*]}" >> "$GITHUB_OUTPUT"
           echo "Composed: ${gzips[*]} ${zips[*]}"
-          # Sanity-check binaries exist
-          for arg in "${gzips[@]}" "${zips[@]}"; do
-            case "$arg" in
-              --gzip|--zip) continue ;;
-            esac
-            p="${arg#*=}"
-            if ! command -v "$p" >/dev/null 2>&1 && [ ! -x "$p" ]; then
-              echo "WARN: tool not found or not executable: $p"
-            fi
-          done
 
       - name: Run benchmark
         shell: bash

@@ -148,8 +148,12 @@ def fmt_bytes(n: int) -> str:
     return f"{n:,}"
 
 
+def binary_present(p: str) -> bool:
+    return bool(p) and (Path(p).exists() or shutil.which(p) is not None)
+
+
 def tool_version(bin_path: str) -> str:
-    if not bin_path or not Path(bin_path).exists() and not shutil.which(bin_path):
+    if not binary_present(bin_path):
         return f"{bin_path} (not found)"
     try:
         r = subprocess.run([bin_path, "--version"],
@@ -481,19 +485,17 @@ def parse_named_path(spec: str, default_name: str = None) -> tuple[str, str]:
     return (default_name or Path(spec).name or "tool"), spec.strip()
 
 
-def parse_zip_pair(spec: str) -> tuple[str, str, str]:
-    """Parse 'name=zip_path' (unzip is inferred as sibling 'unzip[.ext]').
+def parse_zip_spec(spec: str) -> tuple[str, str, str]:
+    """Parse 'name=zip_path'; the unzip path is the sibling whose basename is
+    `zip_path`'s with the first 'zip' rewritten to 'unzip' (so /usr/bin/zip ->
+    /usr/bin/unzip, C:/foo/zip.exe -> C:/foo/unzip.exe, bsdzip -> bsdunzip).
 
-    Splitting on ':' breaks on Windows paths ('C:\\...'), so the explicit
-    override form uses '|': 'name=zip_path|unzip_path'.
-    """
-    name, paths = parse_named_path(spec, default_name="zip")
-    if "|" in paths:
-        zip_p, unzip_p = paths.split("|", 1)
-    else:
-        zip_p = paths
-        zp = Path(zip_p)
-        unzip_p = str(zp.with_name("unzip" + zp.suffix)) if zp.name else "unzip"
+    An empty zip_p ('--zip system=' from a runner where `command -v zip` found
+    nothing) is passed through unchanged — the binary_present filter in main()
+    will drop the tool with a warning."""
+    name, zip_p = parse_named_path(spec, default_name="zip")
+    zp = Path(zip_p)
+    unzip_p = str(zp.with_name(zp.name.replace("zip", "unzip", 1))) if zp.name else ""
     return name, zip_p.strip(), unzip_p.strip()
 
 
@@ -522,17 +524,14 @@ def main() -> int:
         print(f"ERROR: kmpzip binary not found at {kmpzip_bin}", file=sys.stderr)
         return 2
 
-    def _binary_present(p: str) -> bool:
-        return bool(p) and (Path(p).exists() or shutil.which(p) is not None)
-
-    # Build tool lists per family. Skip (with a warning) any reference tool
-    # whose binary isn't present — e.g. choco didn't install zip on the runner.
-    # The kmpzip tool itself is always included; we already verified its binary above.
+    # Skip (with a warning) any reference tool whose binary isn't present —
+    # e.g. choco didn't install zip on the runner. kmpzip itself is always
+    # included; we already verified its binary above.
     gzip_tools = []
     for spec in args.gzip:
         name, path = parse_named_path(spec, default_name="gzip")
         resolved = shutil.which(path) or path
-        if not _binary_present(resolved):
+        if not binary_present(resolved):
             print(f"WARN: gzip tool {name!r} not found at {path!r}; skipping",
                   file=sys.stderr)
             continue
@@ -541,10 +540,10 @@ def main() -> int:
 
     zip_tools = []
     for spec in args.zip_specs:
-        name, zp, up = parse_zip_pair(spec)
+        name, zp, up = parse_zip_spec(spec)
         zp_r = shutil.which(zp) or zp
         up_r = shutil.which(up) or up
-        if not _binary_present(zp_r) or not _binary_present(up_r):
+        if not binary_present(zp_r) or not binary_present(up_r):
             print(f"WARN: zip tool {name!r} not found "
                   f"(zip={zp!r}, unzip={up!r}); skipping",
                   file=sys.stderr)
