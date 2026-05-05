@@ -6,6 +6,8 @@ import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import no.synth.kmpzip.gzip.GzipInputStream
 import no.synth.kmpzip.gzip.GzipOutputStream
+import no.synth.kmpzip.io.InputStream
+import no.synth.kmpzip.io.OutputStream
 import no.synth.kmpzip.kotlinx.asInputStream
 import no.synth.kmpzip.kotlinx.asOutputStream
 import no.synth.kmpzip.kotlinx.unzipFrom
@@ -128,12 +130,7 @@ private fun list(args: List<String>) {
     require(exists(file)) { "File not found: $file" }
 
     val source = SystemFileSystem.source(file).buffered()
-    val password = cli.password
-    val zis = if (password != null) {
-        ZipInputStream(source.asInputStream(), password.encodeToByteArray())
-    } else {
-        ZipInputStream(source.asInputStream())
-    }
+    val zis = ZipInputStream(source.asInputStream(), cli.password?.encodeToByteArray())
 
     zis.use {
         var headerPrinted = false
@@ -144,8 +141,7 @@ private fun list(args: List<String>) {
                 println("-".repeat(60))
                 headerPrinted = true
             }
-            val drain = ByteArray(BUFFER_SIZE)
-            while (it.read(drain, 0, drain.size) != -1) { /* discard */ }
+            it.drain()
 
             val method = when (entry.method) {
                 0 -> "STORED"
@@ -216,12 +212,7 @@ private fun gzip(args: List<String>) {
 
     SystemFileSystem.source(inputFile).buffered().asInputStream().use { fis ->
         GzipOutputStream(SystemFileSystem.sink(outputFile).buffered().asOutputStream()).use { gzos ->
-            val buf = ByteArray(BUFFER_SIZE)
-            while (true) {
-                val n = fis.read(buf, 0, buf.size)
-                if (n == -1) break
-                gzos.write(buf, 0, n)
-            }
+            fis.copyTo(gzos)
         }
     }
 
@@ -248,14 +239,23 @@ private fun gunzip(args: List<String>) {
 
     GzipInputStream(SystemFileSystem.source(inputFile).buffered().asInputStream()).use { gzis ->
         SystemFileSystem.sink(outputFile).buffered().asOutputStream().use { fos ->
-            val buf = ByteArray(BUFFER_SIZE)
-            while (true) {
-                val n = gzis.read(buf, 0, buf.size)
-                if (n == -1) break
-                fos.write(buf, 0, n)
-            }
+            gzis.copyTo(fos)
         }
     }
 
     println("$inputFile -> $outputFile (${fileSize(inputFile)} -> ${fileSize(outputFile)} bytes)")
+}
+
+private fun InputStream.copyTo(out: OutputStream) {
+    val buf = ByteArray(BUFFER_SIZE)
+    while (true) {
+        val n = read(buf, 0, buf.size)
+        if (n == -1) break
+        out.write(buf, 0, n)
+    }
+}
+
+private fun InputStream.drain() {
+    val buf = ByteArray(BUFFER_SIZE)
+    while (read(buf, 0, buf.size) != -1) {}
 }

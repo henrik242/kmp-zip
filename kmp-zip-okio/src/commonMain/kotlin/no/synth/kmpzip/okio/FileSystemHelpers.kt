@@ -1,5 +1,6 @@
 package no.synth.kmpzip.okio
 
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import no.synth.kmpzip.crypto.AesStrength
@@ -15,7 +16,6 @@ import okio.FileSystem
 import okio.Path
 import okio.buffer
 import kotlin.coroutines.CoroutineContext
-import kotlin.coroutines.coroutineContext
 
 private const val BUFFER_SIZE = 8192
 
@@ -56,7 +56,7 @@ suspend fun FileSystem.zipTo(
         // immediately, so any throw from setMethod/setLevel still cleans up the
         // underlying file resource.
         val out = SinkOutputStream(sink(target).buffer())
-        openZos(out, password, encryption, aesStrength).use { zos ->
+        ZipOutputStream(out, password?.encodeToByteArray(), encryption, aesStrength).use { zos ->
             zos.setMethod(method)
             if (level != null) zos.setLevel(level)
             for (src in sources) addRecursive(this@zipTo, zos, src, prefix = "", depth = 0)
@@ -83,10 +83,10 @@ suspend fun FileSystem.unzipFrom(
     withContext(dispatcher) {
         createDirectories(target)
         val input = SourceInputStream(source(archive).buffer())
-        openZis(input, password).use { zis ->
+        ZipInputStream(input, password?.encodeToByteArray()).use { zis ->
             val buf = ByteArray(BUFFER_SIZE)
             while (true) {
-                coroutineContext.ensureActive()
+                currentCoroutineContext().ensureActive()
                 val entry = zis.nextEntry ?: break
                 val safe = safeEntrySegments(entry.name).fold(target) { acc, seg -> acc / seg }
                 if (entry.isDirectory) {
@@ -112,19 +112,6 @@ private fun requireEncryptionConsistency(
     }
 }
 
-private fun openZos(
-    out: SinkOutputStream,
-    password: String?,
-    encryption: ZipEncryption,
-    aesStrength: AesStrength,
-): ZipOutputStream =
-    if (password != null) ZipOutputStream(out, password.encodeToByteArray(), encryption, aesStrength)
-    else ZipOutputStream(out)
-
-private fun openZis(input: SourceInputStream, password: String?): ZipInputStream =
-    if (password != null) ZipInputStream(input, password.encodeToByteArray())
-    else ZipInputStream(input)
-
 private suspend fun addRecursive(
     fs: FileSystem,
     zos: ZipOutputStream,
@@ -132,7 +119,7 @@ private suspend fun addRecursive(
     prefix: String,
     depth: Int,
 ) {
-    coroutineContext.ensureActive()
+    currentCoroutineContext().ensureActive()
     require(depth <= MAX_DEPTH) {
         "zipTo: directory depth exceeds $MAX_DEPTH levels at '$file' — likely a symlink loop"
     }
@@ -155,7 +142,7 @@ private suspend fun addRecursive(
 
 private suspend fun copyStream(input: InputStream, output: OutputStream, buf: ByteArray) {
     while (true) {
-        coroutineContext.ensureActive()
+        currentCoroutineContext().ensureActive()
         val n = input.read(buf, 0, buf.size)
         if (n == -1) break
         output.write(buf, 0, n)
