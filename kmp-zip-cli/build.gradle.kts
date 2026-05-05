@@ -51,6 +51,7 @@ kotlin {
                 implementation(project(":kmp-zip"))
                 implementation(project(":kmp-zip-kotlinx"))
                 implementation(libs.kotlinx.io.core)
+                implementation(libs.kotlinx.coroutines.core)
             }
         }
         commonTest {

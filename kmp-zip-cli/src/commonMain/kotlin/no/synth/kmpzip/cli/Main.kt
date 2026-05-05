@@ -1,5 +1,6 @@
 package no.synth.kmpzip.cli
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.io.buffered
 import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
@@ -7,10 +8,10 @@ import no.synth.kmpzip.gzip.GzipInputStream
 import no.synth.kmpzip.gzip.GzipOutputStream
 import no.synth.kmpzip.kotlinx.asInputStream
 import no.synth.kmpzip.kotlinx.asOutputStream
+import no.synth.kmpzip.kotlinx.unzipFrom
+import no.synth.kmpzip.kotlinx.zipTo
 import no.synth.kmpzip.zip.ZipEncryption
-import no.synth.kmpzip.zip.ZipEntry
 import no.synth.kmpzip.zip.ZipInputStream
-import no.synth.kmpzip.zip.ZipOutputStream
 
 private const val BUFFER_SIZE = 8192
 
@@ -112,35 +113,10 @@ private class CliArgs(args: List<String>) {
 }
 
 private fun fileSize(path: Path): Long = SystemFileSystem.metadataOrNull(path)?.size ?: 0L
-private fun isDirectory(path: Path): Boolean = SystemFileSystem.metadataOrNull(path)?.isDirectory == true
 private fun exists(path: Path): Boolean = SystemFileSystem.exists(path)
 
 private fun padRight(s: String, w: Int): String = if (s.length >= w) s else s + " ".repeat(w - s.length)
 private fun padLeft(s: String, w: Int): String = if (s.length >= w) s else " ".repeat(w - s.length) + s
-
-private val DRIVE_LETTER_REGEX = Regex("^[A-Za-z]:")
-
-/**
- * Builds a target Path under [outputDir] that is guaranteed not to escape it.
- * Rejects absolute paths, drive-letter prefixes, parent-dir traversal, control chars
- * (including embedded NULs), and trims redundant `.` segments. Tab is allowed in
- * names because some legitimate ZIPs contain it.
- */
-private fun safeEntryPath(outputDir: Path, rawName: String): Path {
-    require(rawName.isNotEmpty()) { "Empty entry name not allowed" }
-    require(rawName.none { it.code < 0x20 && it != '\t' }) {
-        "Entry name contains control character: ${rawName.encodeToByteArray().joinToString(" ") { it.toUByte().toString(16) }}"
-    }
-    require(!rawName.startsWith("/") && !rawName.startsWith("\\")) {
-        "Absolute entry path not allowed: $rawName"
-    }
-    require(!DRIVE_LETTER_REGEX.containsMatchIn(rawName)) {
-        "Drive-letter entry path not allowed: $rawName"
-    }
-    val segments = rawName.split('/', '\\').filter { it.isNotEmpty() && it != "." }
-    require(segments.none { it == ".." }) { "Entry path escapes target dir: $rawName" }
-    return segments.fold(outputDir) { acc, seg -> Path(acc, seg) }
-}
 
 // -- list --
 
@@ -193,50 +169,11 @@ private fun unzip(args: List<String>) {
     require(exists(file)) { "File not found: $file" }
 
     val outputDir = cli.resolve(cli.outputDir ?: ".")
-    SystemFileSystem.createDirectories(outputDir)
 
-    val source = SystemFileSystem.source(file).buffered()
-    val password = cli.password
-    val zis = if (password != null) {
-        ZipInputStream(source.asInputStream(), password.encodeToByteArray())
-    } else {
-        ZipInputStream(source.asInputStream())
+    runBlocking {
+        SystemFileSystem.unzipFrom(file, outputDir, password = cli.password)
     }
-
-    var skipped = 0
-    zis.use {
-        while (true) {
-            val entry = it.nextEntry ?: break
-            try {
-                val target = safeEntryPath(outputDir, entry.name)
-
-                if (entry.isDirectory) {
-                    SystemFileSystem.createDirectories(target)
-                    println("  created: ${entry.name}")
-                } else {
-                    target.parent?.let { p -> SystemFileSystem.createDirectories(p) }
-                    SystemFileSystem.sink(target).buffered().asOutputStream().use { fos ->
-                        val buf = ByteArray(BUFFER_SIZE)
-                        while (true) {
-                            val n = it.read(buf, 0, buf.size)
-                            if (n == -1) break
-                            fos.write(buf, 0, n)
-                        }
-                    }
-                    println("extracted: ${entry.name} (${fileSize(target)} bytes)")
-                }
-            } catch (e: IllegalArgumentException) {
-                // Per-entry isolation: skip malformed/dangerous names but continue extracting
-                // the rest of the archive. The trailing `if (skipped > 0) error(...)` ensures
-                // a non-zero exit code is still propagated.
-                printErr("Skipping bad entry '${entry.name}': ${e.message}")
-                skipped++
-            }
-        }
-    }
-    if (skipped > 0) {
-        error("$skipped entr${if (skipped == 1) "y" else "ies"} skipped due to errors")
-    }
+    println("Extracted $file -> $outputDir")
 }
 
 // -- zip --
@@ -254,48 +191,12 @@ private fun zip(args: List<String>) {
         }
     }
 
-    val sink = SystemFileSystem.sink(zipFile).buffered()
-    val password = cli.password
     val encryption = if (cli.legacy) ZipEncryption.LEGACY else ZipEncryption.AES
-    val zos = if (password != null) {
-        ZipOutputStream(sink.asOutputStream(), password.encodeToByteArray(), encryption)
-    } else {
-        ZipOutputStream(sink.asOutputStream())
-    }
 
-    zos.use {
-        for (inputFile in inputFiles) {
-            addToZip(it, inputFile, "")
-        }
+    runBlocking {
+        SystemFileSystem.zipTo(zipFile, inputFiles, password = cli.password, encryption = encryption)
     }
-
     println("Created $zipFile (${fileSize(zipFile)} bytes)")
-}
-
-private fun addToZip(zos: ZipOutputStream, file: Path, prefix: String) {
-    val entryName = if (prefix.isEmpty()) file.name else "$prefix/${file.name}"
-
-    if (isDirectory(file)) {
-        zos.putNextEntry(ZipEntry("$entryName/"))
-        zos.closeEntry()
-        println("  added: $entryName/")
-
-        SystemFileSystem.list(file).sortedBy { it.name }.forEach { child ->
-            addToZip(zos, child, entryName)
-        }
-    } else {
-        zos.putNextEntry(ZipEntry(entryName))
-        SystemFileSystem.source(file).buffered().asInputStream().use { fis ->
-            val buf = ByteArray(BUFFER_SIZE)
-            while (true) {
-                val n = fis.read(buf, 0, buf.size)
-                if (n == -1) break
-                zos.write(buf, 0, n)
-            }
-        }
-        zos.closeEntry()
-        println("  added: $entryName (${fileSize(file)} bytes)")
-    }
 }
 
 // -- gzip --

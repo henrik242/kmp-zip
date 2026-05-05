@@ -17,17 +17,22 @@ kotlin {
     linuxArm64()
     mingwX64()
 
+    applyDefaultHierarchyTemplate()
+
     sourceSets {
         commonMain {
             dependencies {
                 api(project(":kmp-zip"))
                 implementation(libs.okio)
+                implementation(libs.kotlinx.coroutines.core)
             }
         }
         commonTest {
             dependencies {
                 implementation(kotlin("test"))
                 implementation(libs.okio)
+                implementation(libs.okio.fakefilesystem)
+                implementation(libs.kotlinx.coroutines.test)
             }
         }
     }

@@ -17,17 +17,21 @@ kotlin {
     linuxArm64()
     mingwX64()
 
+    applyDefaultHierarchyTemplate()
+
     sourceSets {
         commonMain {
             dependencies {
                 api(project(":kmp-zip"))
                 implementation(libs.kotlinx.io.core)
+                implementation(libs.kotlinx.coroutines.core)
             }
         }
         commonTest {
             dependencies {
                 implementation(kotlin("test"))
                 implementation(libs.kotlinx.io.core)
+                implementation(libs.kotlinx.coroutines.test)
             }
         }
     }

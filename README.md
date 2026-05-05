@@ -79,13 +79,13 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:0.11.0")
+                implementation("no.synth:kmp-zip:0.11.2")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:0.11.0")
+                implementation("no.synth:kmp-zip-kotlinx:0.11.2")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:0.11.0")
+                implementation("no.synth:kmp-zip-okio:0.11.2")
             }
         }
     }
@@ -149,6 +149,8 @@ kotlin {
 | `ZipOutputStream(Sink)` | Factory — creates a `ZipOutputStream` from a `Sink` |
 | `GzipInputStream(Source)` | Factory — creates a `GzipInputStream` from a `Source` |
 | `GzipOutputStream(Sink)` | Factory — creates a `GzipOutputStream` from a `Sink` |
+| `FileSystem.zipTo(target, sources, ...)` | Suspend helper — recursively zips files/directories into `target` |
+| `FileSystem.unzipFrom(archive, target, ...)` | Suspend helper — extracts `archive` into `target`, rejecting unsafe entry names |
 
 ### `kmp-zip-okio` — `no.synth.kmpzip.okio`
 
@@ -166,6 +168,8 @@ kotlin {
 | `ZipOutputStream(BufferedSink)` | Factory — creates a `ZipOutputStream` from a `BufferedSink` |
 | `GzipInputStream(BufferedSource)` | Factory — creates a `GzipInputStream` from a `BufferedSource` |
 | `GzipOutputStream(BufferedSink)` | Factory — creates a `GzipOutputStream` from a `BufferedSink` |
+| `FileSystem.zipTo(target, sources, ...)` | Suspend helper — recursively zips files/directories into `target` |
+| `FileSystem.unzipFrom(archive, target, ...)` | Suspend helper — extracts `archive` into `target`, rejecting unsafe entry names |
 
 ## Usage
 
@@ -405,6 +409,57 @@ ZipOutputStream(sink).use { zos ->
 }
 ```
 
+### Suspend filesystem helpers
+
+Both `kmp-zip-okio` and `kmp-zip-kotlinx` ship `suspend` extensions on their respective `FileSystem` types that zip files and directories straight from disk and extract archives back to disk. The helpers run their I/O on a configurable `CoroutineContext` (defaulting to `Dispatchers.IO` on JVM and `Dispatchers.Default` on native) and are cooperatively cancellable at every read/write chunk and entry boundary.
+
+**OkIO:**
+
+```kotlin
+import okio.FileSystem
+import okio.Path.Companion.toPath
+import no.synth.kmpzip.okio.unzipFrom
+import no.synth.kmpzip.okio.zipTo
+
+suspend fun example() {
+    val fs = FileSystem.SYSTEM
+    fs.zipTo(
+        target = "out/archive.zip".toPath(),
+        sources = listOf("src/main".toPath(), "README.md".toPath()),
+        password = "swordfish",  // optional — AES-256 by default
+    )
+    fs.unzipFrom(
+        archive = "out/archive.zip".toPath(),
+        target = "extracted".toPath(),
+        password = "swordfish",
+    )
+}
+```
+
+**kotlinx-io:**
+
+```kotlin
+import kotlinx.io.files.Path
+import kotlinx.io.files.SystemFileSystem
+import no.synth.kmpzip.kotlinx.unzipFrom
+import no.synth.kmpzip.kotlinx.zipTo
+
+suspend fun example() {
+    SystemFileSystem.zipTo(
+        target = Path("out/archive.zip"),
+        sources = listOf(Path("src/main"), Path("README.md")),
+    )
+    SystemFileSystem.unzipFrom(
+        archive = Path("out/archive.zip"),
+        target = Path("extracted"),
+    )
+}
+```
+
+Both helpers walk directories recursively, follow symlinks, do not preserve Unix mode bits, and reject extracted entry names that would escape `target` (absolute paths, drive letters, parent traversal, control chars).
+
+The helpers are not provided for the `wasmJs` target — browser wasm has no filesystem, and Node's wasm filesystem support is not exposed by these adapter modules. Use the streaming `ByteArray` API there.
+
 ## CLI
 
 The `kmp-zip-cli` module provides a command-line tool for ZIP and GZIP operations, powered by the core library.
@@ -481,8 +536,8 @@ Requires JDK 21 and Xcode (for iOS targets).
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v0.11.0
-git push origin v0.11.0
+git tag v0.11.2
+git push origin v0.11.2
 ```
 
 ## License
