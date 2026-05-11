@@ -41,3 +41,27 @@ jobs:
             kmp-zip-cli/build/bin/linuxArm64/releaseExecutable/kmpzip-linux-arm64
             kmp-zip-cli/build/bin/mingwX64/releaseExecutable/kmpzip-windows-x64.exe
           fail_on_unmatched_files: true
+
+  # Releases created with GITHUB_TOKEN don't fire `release: published`
+  # downstream, so dispatch perf.yml explicitly. Isolated from `publish`
+  # so the Gradle/Maven/GPG steps don't run with `actions: write`. Best-
+  # effort: a dispatch failure must not red-flag a release that's already
+  # live.
+  trigger-benchmarks:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: none
+    continue-on-error: true
+    steps:
+      - name: Dispatch perf.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh workflow run perf.yml --ref "$TAG" \
+            -f source=release -f release_tag="$TAG"
+          echo "Dispatched perf.yml for \`$TAG\` — see https://github.com/$REPO/actions/workflows/perf.yml" \
+            >> "$GITHUB_STEP_SUMMARY"

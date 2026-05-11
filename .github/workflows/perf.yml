@@ -31,8 +31,6 @@ on:
         description: Number of timed trials per measurement (min wins)
         type: string
         default: "3"
-  release:
-    types: [published]
 
 jobs:
   setup:
@@ -48,31 +46,20 @@ jobs:
       - id: params
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_TAG: ${{ github.event.release.tag_name }}
           INPUT_SOURCE: ${{ inputs.source }}
           INPUT_TAG: ${{ inputs.release_tag }}
           INPUT_SIZES: ${{ inputs.sizes }}
           INPUT_TRIALS: ${{ inputs.trials }}
           INPUT_PLATFORMS: ${{ inputs.platforms }}
         run: |
-          # On release events, source is fixed to 'release' and the tag is the
-          # just-published release; on workflow_dispatch we honor the inputs.
-          if [ "$EVENT_NAME" = "release" ]; then
-            source="release"
-            release_tag="${EVENT_TAG:-latest}"
-          else
-            source="${INPUT_SOURCE:-ci}"
-            release_tag="${INPUT_TAG:-latest}"
-          fi
           {
-            echo "source=$source"
-            echo "release_tag=$release_tag"
+            echo "source=${INPUT_SOURCE:-ci}"
+            echo "release_tag=${INPUT_TAG:-latest}"
             echo "sizes=${INPUT_SIZES:-text:200M,rand:200M,zero:500M}"
             echo "trials=${INPUT_TRIALS:-3}"
             echo "platforms=${INPUT_PLATFORMS:-all}"
           } >> "$GITHUB_OUTPUT"
-          echo "Resolved: source=$source tag=$release_tag platforms=${INPUT_PLATFORMS:-all}"
+          echo "Resolved: source=${INPUT_SOURCE:-ci} tag=${INPUT_TAG:-latest} platforms=${INPUT_PLATFORMS:-all}"
 
       - id: gen
         shell: bash
