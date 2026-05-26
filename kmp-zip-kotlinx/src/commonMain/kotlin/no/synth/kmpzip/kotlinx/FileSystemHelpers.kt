@@ -29,7 +29,13 @@ private const val MAX_DEPTH = 1024
  * at [target]. Overwrites [target] if it exists; creates parent directories.
  *
  * Runs the I/O on [dispatcher] — defaults to `Dispatchers.IO` on JVM and
- * `Dispatchers.Default` on native. Cooperatively cancellable.
+ * `Dispatchers.Default` elsewhere (native and wasmJs). Cooperatively cancellable
+ * at entry boundaries and within `copyStream`. On wasmJs the runtime is
+ * single-threaded, so a `withTimeout` set on an in-flight call cannot fire until
+ * the body next suspends — pre-cancel the scope if you need to abort up front.
+ *
+ * Browser callers: kotlinx-io's `SystemFileSystem` is backed by Node's `fs` and
+ * is not usable in a browser; supply an in-memory `FileSystem` instead.
  *
  * Symlinks are followed and Unix mode bits are not preserved; this matches the
  * behavior of the kmpzip CLI. A symlink loop is detected via a depth cap and
@@ -70,7 +76,8 @@ suspend fun FileSystem.zipTo(
  * letters, parent traversal, control chars).
  *
  * Runs the I/O on [dispatcher] — defaults to `Dispatchers.IO` on JVM and
- * `Dispatchers.Default` on native. Cooperatively cancellable.
+ * `Dispatchers.Default` elsewhere (native and wasmJs). Cooperatively cancellable.
+ * On wasmJs see the cancellation caveat on [zipTo].
  *
  * @throws IllegalArgumentException for unsafe entry names or password/format mismatches.
  */

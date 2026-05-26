@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.maven.publish)
@@ -16,6 +18,13 @@ kotlin {
     linuxX64()
     linuxArm64()
     mingwX64()
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        browser {
+            testTask { enabled = false }
+        }
+        nodejs()
+    }
 
     applyDefaultHierarchyTemplate()
 

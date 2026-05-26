@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.maven.publish)
@@ -16,6 +18,13 @@ kotlin {
     linuxX64()
     linuxArm64()
     mingwX64()
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        browser {
+            testTask { enabled = false }
+        }
+        nodejs()
+    }
 
     applyDefaultHierarchyTemplate()
 
@@ -35,6 +44,12 @@ kotlin {
                 implementation(libs.kotlinx.coroutines.test)
             }
         }
+        // Tests that need a separate thread to fire timers while a busy body runs
+        // (e.g. `withTimeout` cancelling an in-flight zip). wasmJs is single-threaded
+        // — the timer can't fire until the body suspends — so it's excluded here.
+        val multiThreadedTest by creating { dependsOn(commonTest.get()) }
+        jvmTest { dependsOn(multiThreadedTest) }
+        nativeTest { dependsOn(multiThreadedTest) }
     }
 }
 

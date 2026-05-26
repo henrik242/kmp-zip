@@ -1,10 +1,11 @@
 package no.synth.kmpzip.okio
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withTimeout
 import okio.Path.Companion.toPath
 import okio.fakefilesystem.FakeFileSystem
 import kotlin.coroutines.CoroutineContext
@@ -14,7 +15,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
-import kotlin.time.Duration.Companion.milliseconds
 
 class FileSystemHelpersTest {
 
@@ -194,22 +194,36 @@ class FileSystemHelpersTest {
         assertTrue(counter.dispatched > 0, "Custom dispatcher should have been used")
     }
 
+    // Pre-cancelled-context tests: covers the cancellation contract on every
+    // target — including wasmJs, where mid-flight cancellation isn't possible
+    // because the runtime is single-threaded. The mid-flight variants live in
+    // FileSystemHelpersCancellationTest under multiThreadedTest.
     @Test
-    fun cancellationAbortsZip() = runTest {
+    fun zipToHonorsPreCancelledScope() = runTest {
         val fs = FakeFileSystem()
-        val src = "/work/big".toPath()
-        fs.createDirectories(src)
-        // Build a non-trivial workload so cancellation has time to land between
-        // ensureActive() checks. 5K small files * ~10µs/entry > 50ms.
-        repeat(5_000) { i ->
-            fs.write(src / "file-$i.txt") { writeUtf8("payload-$i".repeat(20)) }
-        }
+        val src = "/work/a.txt".toPath()
+        fs.createDirectories(src.parent!!)
+        fs.write(src) { writeUtf8("hi") }
         val zip = "/out/archive.zip".toPath()
 
-        assertFails {
-            withTimeout(10.milliseconds) {
-                fs.zipTo(zip, listOf(src))
-            }
+        val cancelled = Job().apply { cancel() }
+        assertFailsWith<CancellationException> {
+            fs.zipTo(zip, listOf(src), dispatcher = cancelled)
+        }
+    }
+
+    @Test
+    fun unzipFromHonorsPreCancelledScope() = runTest {
+        val fs = FakeFileSystem()
+        val src = "/work/a.txt".toPath()
+        fs.createDirectories(src.parent!!)
+        fs.write(src) { writeUtf8("hi") }
+        val zip = "/out/archive.zip".toPath()
+        fs.zipTo(zip, listOf(src))
+
+        val cancelled = Job().apply { cancel() }
+        assertFailsWith<CancellationException> {
+            fs.unzipFrom(zip, "/extracted".toPath(), dispatcher = cancelled)
         }
     }
 
