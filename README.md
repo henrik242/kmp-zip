@@ -103,6 +103,9 @@ kotlin {
 | `ByteArrayInputStream` | Reads from a `ByteArray`. Full Java-compatible API. |
 | `ByteArrayOutputStream` | Auto-growing buffer with `toByteArray()`, `size()`, `reset()`, `writeTo()` |
 | `InputStream.readBytes()` | Extension that reads all remaining bytes |
+| `SeekableSource` | Random-access, read-only byte source — positional `read(position, into, off, len)` + `size`. Used by `ZipFile`. |
+| `ByteArraySeekableSource(ByteArray)` | In-memory `SeekableSource`; works on every target including browser wasmJs |
+| `fileSeekableSource(path)` | File-backed `SeekableSource` that reads lazily by position. JVM/Apple/Linux/Windows native and wasmJs-on-Node (not browser). Windows native is capped at 2 GB (32-bit file offsets). |
 
 ### `kmp-zip` — `no.synth.kmpzip.zip`
 
@@ -110,6 +113,8 @@ kotlin {
 |------|-------------|
 | `ZipInputStream(InputStream, password?)` | Reads ZIP entries — `nextEntry`, `closeEntry()`, `read()`, `readBytes()`. Pass a password (`ByteArray` or `String`) to decrypt encrypted entries (auto-detects AES or legacy). |
 | `ZipInputStream(ByteArray, password?)` | Convenience factory |
+| `ZipFile(SeekableSource, password?)` | Random-access reader — parses the central directory, then `getEntry(name)` / `entries` / `getInputStream(entry)` seek straight to one entry without streaming the whole archive. Decrypts AES and legacy entries like `ZipInputStream`. No ZIP64. |
+| `ZipFile(ByteArray, password?)` | Convenience factory |
 | `ZipOutputStream(OutputStream, password?, encryption?, aesStrength?)` | Writes ZIP entries — `putNextEntry()`, `closeEntry()`, `write()`, `finish()`, `setMethod()`, `setLevel()`. Pass a password to encrypt all entries. |
 | `ZipEntry` | Entry metadata — `name`, `size`, `compressedSize`, `crc`, `method`, `isDirectory`, `time`, `comment`, `extra` |
 | `ZipConstants` | `STORED = 0`, `DEFLATED = 8` |
@@ -166,6 +171,8 @@ kotlin {
 | `OutputStream.asSink()` | Extension shorthand |
 | `ZipInputStream(BufferedSource)` | Factory — creates a `ZipInputStream` from a `BufferedSource` |
 | `ZipOutputStream(BufferedSink)` | Factory — creates a `ZipOutputStream` from a `BufferedSink` |
+| `ZipFile(FileHandle, password?)` | Factory — random-access `ZipFile` over an okio `FileHandle` (open via `FileSystem.openReadOnly(path)`) |
+| `FileHandle.asSeekableSource()` | Adapts an okio `FileHandle` to a `SeekableSource` |
 | `GzipInputStream(BufferedSource)` | Factory — creates a `GzipInputStream` from a `BufferedSource` |
 | `GzipOutputStream(BufferedSink)` | Factory — creates a `GzipOutputStream` from a `BufferedSink` |
 | `FileSystem.zipTo(target, sources, ...)` | Suspend helper — recursively zips files/directories into `target` |
@@ -183,6 +190,27 @@ ZipInputStream(zipBytes).use { zis ->
     }
 }
 ```
+
+### Extract one entry without scanning the whole archive
+
+`ZipInputStream` walks entries front-to-back. When you only need a specific entry
+from a large archive — e.g. read the database now, defer the media — use `ZipFile`,
+which reads the central directory and seeks straight to the entry you ask for.
+
+```kotlin
+import no.synth.kmpzip.io.fileSeekableSource
+
+// File-backed: only the central directory and the entry you read are touched —
+// the archive is never fully loaded into memory.
+ZipFile(fileSeekableSource("/path/to/backup.zip"), password = "secret").use { zip ->
+    val db = zip.getEntry("diary.sqlite") ?: error("missing db")
+    val bytes = zip.getInputStream(db).use { it.readBytes() }
+    // ...import bytes now; extract media entries later, in any order.
+}
+```
+
+In a browser (wasmJs) there is no synchronous random file access — back `ZipFile`
+with `ByteArraySeekableSource(bytes)` (or just `ZipFile(bytes)`) instead.
 
 ### Create a ZIP into a ByteArray
 

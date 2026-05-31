@@ -35,7 +35,9 @@ class ZipInputStream(
 
     // For DEFLATED entries
     private var inflater: PlatformInflater? = null
-    private var inflaterBuf = ByteArray(512)
+    // 16 KB balances few source reads (each is a syscall on file sources and a
+    // JS-boundary crossing + copy on wasmJs) against per-entry buffer overhead.
+    private var inflaterBuf = ByteArray(16384)
     private var inflaterBufPos = 0
     private var inflaterBufLen = 0
 
@@ -642,7 +644,7 @@ class ZipInputStream(
                 if (buf[i] == 0x50.toByte() && buf[i + 1] == 0x4b.toByte() &&
                     buf[i + 2] == 0x07.toByte() && buf[i + 3] == 0x08.toByte()
                 ) {
-                    val cs = readLeUIntFromArray(buf, i + 8)
+                    val cs = readLeUInt(buf, i + 8)
                     if (cs == prefixLen + i.toLong()) {
                         pushbackBuf = if (size == buf.size) buf else buf.copyOf(size)
                         pushbackPos = 0
@@ -669,7 +671,7 @@ class ZipInputStream(
                 val isCentralDir = sig3 == 0x01 && sig4 == 0x02
                 if (isLocalHeader || isCentralDir) {
                     val ddStart = i - 12
-                    val cs = readLeUIntFromArray(data, ddStart + 4)
+                    val cs = readLeUInt(data, ddStart + 4)
                     if (cs == prefixLen + ddStart.toLong()) {
                         pushbackBuf = data
                         pushbackPos = 0
@@ -685,14 +687,6 @@ class ZipInputStream(
         pushbackPos = 0
         pushbackLen = size
         throw Exception("Cannot determine compressed size for AES entry with data descriptor")
-    }
-
-    /** Read a 32-bit unsigned little-endian integer from a byte array as a Long. */
-    private fun readLeUIntFromArray(data: ByteArray, offset: Int): Long {
-        return ((data[offset].toInt() and 0xFF).toLong()) or
-            (((data[offset + 1].toInt() and 0xFF).toLong()) shl 8) or
-            (((data[offset + 2].toInt() and 0xFF).toLong()) shl 16) or
-            (((data[offset + 3].toInt() and 0xFF).toLong()) shl 24)
     }
 
     companion object {
