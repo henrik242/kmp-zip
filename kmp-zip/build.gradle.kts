@@ -168,6 +168,16 @@ kotlin {
             sourceSets["${target}Test"].dependsOn(nativeNonAppleTest)
         }
 
+        // The file-backed SeekableSource calls posix fseek/ftell, whose `long` offset is
+        // 64-bit on POSIX but 32-bit on Windows. A source set shared across both (like
+        // nativeMain) fails the metadata compile with "numbers with different bit widths",
+        // so the single implementation is compiled per platform-family — apple/linux/mingw,
+        // each width-uniform — rather than duplicated.
+        val nativeFileSrc = "src/nativeFileMain/kotlin"
+        sourceSets["appleMain"].kotlin.srcDir(nativeFileSrc)
+        sourceSets["linuxMain"].kotlin.srcDir(nativeFileSrc)
+        sourceSets["mingwMain"].kotlin.srcDir(nativeFileSrc)
+
         commonTest {
             dependencies {
                 implementation(kotlin("test"))
