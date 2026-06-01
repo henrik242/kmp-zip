@@ -61,7 +61,7 @@ jobs:
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
         run: |
-          gh workflow run perf.yml --ref "$TAG" \
+          gh workflow run perf.yml -R "$REPO" --ref "$TAG" \
             -f source=release -f release_tag="$TAG"
-          echo "Dispatched perf.yml for \`$TAG\` — see https://github.com/$REPO/actions/workflows/perf.yml" \
+          echo "Dispatched perf.yml for \`$TAG\`. See https://github.com/$REPO/actions/workflows/perf.yml" \
             >> "$GITHUB_STEP_SUMMARY"
