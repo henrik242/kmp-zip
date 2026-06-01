@@ -19,6 +19,13 @@ import no.synth.kmpzip.io.InputStream
  * see the kmpzip CLI for an example of validating entry names against a target
  * directory.
  *
+ * **Integrity is verified only for entries read to completion.** Reading an entry to
+ * EOF checks its CRC-32 and, for WinZip AES, the authentication code. Advancing past
+ * an entry with [nextEntry] without reading it skips it cheaply and does *not* verify
+ * it — to validate a whole archive, read every entry (e.g. via [readBytes]). For
+ * listing/selecting entries without reading them, prefer [ZipFile], which reads the
+ * central directory directly.
+ *
  * @param input the underlying input stream
  * @param password optional password for decrypting encrypted entries (as UTF-8 bytes)
  */
@@ -29,6 +36,10 @@ class ZipInputStream(
     private var currentEntry: ZipEntry? = null
     private var closed = false
     private var entryEof = true
+
+    // False until the current entry's data has been read from. Lets closeEntry skip an
+    // untouched entry by advancing the raw stream instead of decrypting + inflating it.
+    private var entryReadStarted = false
 
     // For STORED entries
     private var remainingBytes: Long = 0
@@ -222,6 +233,7 @@ class ZipInputStream(
 
         currentEntry = entry
         entryEof = false
+        entryReadStarted = false
         entryCrc = Crc32()
         entryEncrypted = isEncrypted
 
@@ -259,11 +271,85 @@ class ZipInputStream(
 
     fun closeEntry() {
         if (entryEof) return
-        val skipBuf = ByteArray(256)
-        while (!entryEof) {
-            if (read(skipBuf, 0, skipBuf.size) == -1) break
+
+        // Fast path: skip an untouched entry by advancing past its raw compressed bytes
+        // instead of decrypting and inflating data the caller never read — the big win
+        // when walking a large encrypted archive to reach a few entries. input.skip is a
+        // seek when the underlying stream supports one (e.g. a file stream), otherwise a
+        // raw read-and-discard; either way no decrypt/inflate runs. It bypasses CRC /
+        // AES-auth verification, which is correct precisely because the data was not read.
+        //
+        // Restricted to entries with a known on-disk length and no data descriptor; the
+        // streaming-descriptor case (size only known after the data) falls back below.
+        val rawRemaining = if (!entryReadStarted && !hasDataDescriptor) rawEntryBytesRemaining() else -1L
+        if (rawRemaining >= 0) {
+            skipRaw(rawRemaining)
+            discardEntryState()
+        } else {
+            val skipBuf = ByteArray(8192)
+            while (!entryEof) {
+                if (read(skipBuf, 0, skipBuf.size) == -1) break
+            }
         }
         currentEntry = null
+    }
+
+    /**
+     * Raw on-disk bytes still belonging to the current (unread, descriptor-free) entry,
+     * from the current input position to the next local header. -1 if unknown.
+     */
+    private fun rawEntryBytesRemaining(): Long {
+        val entry = currentEntry ?: return -1L
+        return when {
+            // AES: salt + PVV already consumed; ciphertext + auth code remain.
+            aesCipher != null ->
+                if (aesRemainingEncryptedBytes >= 0) aesRemainingEncryptedBytes + WinZipAesCipher.AUTH_CODE_LENGTH else -1L
+            // Legacy: 12-byte encryption header already consumed; ciphertext remains.
+            legacyCipher != null -> if (legacyRemainingEncryptedBytes >= 0) legacyRemainingEncryptedBytes else -1L
+            // Plain STORED/DEFLATED: the whole compressed payload is still ahead.
+            else -> entry.compressedSize
+        }
+    }
+
+    /** Advances [n] raw bytes: drains the pushback buffer first, then input.skip (lseek). */
+    private fun skipRaw(n: Long) {
+        var remaining = n
+        val pb = pushbackBuf
+        if (pb != null && pushbackPos < pushbackLen) {
+            val take = minOf((pushbackLen - pushbackPos).toLong(), remaining).toInt()
+            pushbackPos += take
+            remaining -= take
+            if (pushbackPos >= pushbackLen) {
+                pushbackBuf = null
+                pushbackPos = 0
+                pushbackLen = 0
+            }
+        }
+        var scratch: ByteArray? = null
+        while (remaining > 0) {
+            val skipped = input.skip(remaining)
+            if (skipped > 0) {
+                remaining -= skipped
+                continue
+            }
+            // Stream can't skip here — read and discard (still no decrypt/inflate).
+            val s = scratch ?: ByteArray(8192).also { scratch = it }
+            val r = input.read(s, 0, minOf(remaining, s.size.toLong()).toInt())
+            if (r <= 0) break
+            remaining -= r
+        }
+    }
+
+    /** Tears down per-entry decode state after a fast skip, without verifying anything. */
+    private fun discardEntryState() {
+        entryEof = true
+        inflater?.end()
+        inflater = null
+        aesCipher = null
+        legacyCipher = null
+        entryCrc = null
+        inflaterBufPos = 0
+        inflaterBufLen = 0
     }
 
     override fun read(): Int {
@@ -275,6 +361,7 @@ class ZipInputStream(
     override fun read(b: ByteArray, off: Int, len: Int): Int {
         val entry = currentEntry
         if (entryEof || entry == null) return -1
+        entryReadStarted = true
         return when (entry.method) {
             ZipConstants.STORED -> readStored(b, off, len)
             ZipConstants.DEFLATED -> readDeflated(b, off, len)

@@ -13,6 +13,10 @@ runs N timed trials of compress + decompress for each tool. Reports min
 wall-clock. Two families:
   - gzip: each --gzip entry plus kmpzip's `gzip`/`gunzip` modes
   - zip:  each --zip entry plus kmpzip's `zip`/`unzip` modes
+
+Also runs a "listing" benchmark: time to list entry names of a large many-entry
+archive (plain + AES) via kmpzip `list` vs system unzip/zipinfo/7z, with kmpzip
+`unzip` (full decode) as the baseline the listing path should beat.
 """
 import argparse
 import json
@@ -499,6 +503,84 @@ def bench_decompression(work: Path, corpora: list, tools: list, trials: int,
     print()
 
 
+# ---- listing benchmark -------------------------------------------------------
+# The reported issue: walking entries to list/select files in a large (encrypted)
+# archive should not decrypt or inflate the data you skip. kmpzip `list` reads the
+# central directory (ZipFile); unzip -Z1 / zipinfo / 7z l do the same. Full decode
+# (kmpzip `unzip`) is shown alongside as the cost the listing path avoids.
+
+# Listing reads the central directory, so no password is needed (filenames aren't
+# encrypted) — the argv builders take only the archive path.
+def make_list_tools(kmpzip_bin: str) -> list[dict]:
+    tools = [{"name": "kmpzip list", "own": True, "argv": lambda arc: [kmpzip_bin, "list", str(arc)]}]
+    if binary_present("unzip"):
+        tools.append({"name": "unzip -Z1", "argv": lambda arc: ["unzip", "-Z1", str(arc)]})
+    if binary_present("zipinfo"):
+        tools.append({"name": "zipinfo -1", "argv": lambda arc: ["zipinfo", "-1", str(arc)]})
+    sevenzip = next((b for b in ("7zz", "7za", "7z") if binary_present(b)), None)
+    if sevenzip:
+        tools.append({"name": f"{sevenzip} l", "argv": lambda arc: [sevenzip, "l", "-ba", str(arc)]})
+    return tools
+
+
+def bench_listing(work: Path, kmpzip_bin: str, trials: int, out: dict) -> bool:
+    """Times 'list entry names' on a many-entry archive — plain and AES — for kmpzip
+    vs system tools, with full decode (kmpzip unzip) as the baseline it should beat."""
+    entry_count, entry_size = 200, 256 * 1024  # ~50MB of incompressible random media (deflate is a no-op, so listing cost dominates)
+    src_dir = work / "list_src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    names = []
+    for i in range(entry_count):
+        p = src_dir / f"media_{i:04d}.bin"
+        if not (p.exists() and p.stat().st_size == entry_size):
+            p.write_bytes(os.urandom(entry_size))
+        names.append(p.name)
+
+    print(f"=== Listing ({entry_count} entries, {fmt_bytes(entry_count * entry_size)}) ===")
+    list_tools = make_list_tools(kmpzip_bin)
+    ok = True
+    for variant, pw in (("plain", None), ("encrypted-aes", "benchpass")):
+        archive = work / f"list_{variant}.zip"
+        if archive.exists():
+            archive.unlink()
+        build = [kmpzip_bin, "zip"] + (["-p", pw] if pw else []) + [str(archive)] + names
+        r = subprocess.run(build, cwd=str(src_dir),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if r.returncode != 0:
+            print(f"  {variant}: archive build failed (rc={r.returncode}): "
+                  f"{r.stderr.decode('utf-8', 'replace')[:200]}")
+            ok = False
+            continue
+
+        warm_cache(archive)
+        print(f"  -- {variant} --")
+        row = {}
+        for t in list_tools:
+            secs, rc, err = bench_min(lambda: None, t["argv"](archive), trials)
+            row[t["name"]] = {"secs": secs, "rc": rc}
+            # Only kmpzip's own commands gate success; third-party tools are
+            # informational (e.g. unzip returns nonzero on benign warnings).
+            if rc != 0 and t.get("own"):
+                ok = False
+            print(f"    {t['name']:<16} {fmt_secs(secs)}" + ("" if rc == 0 else f"  (rc={rc})"))
+        # Baseline: full decode (what listing must NOT cost). Extract to a temp dir.
+        out_dir = work / f"list_extract_{variant}"
+        def prep():
+            if out_dir.exists():
+                shutil.rmtree(out_dir)
+            out_dir.mkdir(parents=True)
+        decode_argv = [kmpzip_bin, "unzip"] + (["-p", pw] if pw else []) + ["-d", str(out_dir), str(archive)]
+        secs, rc, err = bench_min(prep, decode_argv, max(1, trials // 2))
+        row["kmpzip unzip (decode all)"] = {"secs": secs, "rc": rc}
+        print(f"    {'kmpzip unzip*':<16} {fmt_secs(secs)}  (*full decode baseline)")
+        shutil.rmtree(out_dir, ignore_errors=True)
+        out.setdefault("listing", {})[variant] = row
+    print("  (sub-10ms rows sit near the process-startup floor; the decode baseline is the"
+          " meaningful contrast — listing must not pay it)")
+    print()
+    return ok
+
+
 # ---- argparse parsing helpers -----------------------------------------------
 
 def parse_named_path(spec: str, default_name: str = None) -> tuple[str, str]:
@@ -651,6 +733,10 @@ def main() -> int:
                           out["compression"][family])
         bench_decompression(work, corpora, tools, args.trials,
                             out["decompression"][family])
+
+    # --- listing (the "iterate entries is slow" issue) ------------------------
+    if not bench_listing(work, kmpzip_bin, args.trials, out):
+        overall_ok = False
 
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(out, indent=2, default=str))

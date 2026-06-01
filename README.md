@@ -508,7 +508,7 @@ The `./kmpzip` wrapper picks a native binary for the host (`macosArm64`, `linuxX
 
 | Command | Alias | Description |
 |---------|-------|-------------|
-| `list <file.zip> [-p password]` | `l` | List ZIP contents (method, size, compressed size, name) |
+| `list <file.zip>` | `l` | List ZIP contents (method, size, compressed size, name) |
 | `unzip <file.zip> [-d dir] [-p password]` | `x` | Extract ZIP contents to a directory |
 | `zip <file.zip> [-p password] [--legacy] <files..>` | `c` | Create ZIP from files and directories (recursive) |
 | `gzip <file>` | `z` | GZIP compress a file (creates `<file>.gz`) |

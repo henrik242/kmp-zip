@@ -8,12 +8,13 @@ import no.synth.kmpzip.gzip.GzipInputStream
 import no.synth.kmpzip.gzip.GzipOutputStream
 import no.synth.kmpzip.io.InputStream
 import no.synth.kmpzip.io.OutputStream
+import no.synth.kmpzip.io.fileSeekableSource
 import no.synth.kmpzip.kotlinx.asInputStream
 import no.synth.kmpzip.kotlinx.asOutputStream
 import no.synth.kmpzip.kotlinx.unzipFrom
 import no.synth.kmpzip.kotlinx.zipTo
 import no.synth.kmpzip.zip.ZipEncryption
-import no.synth.kmpzip.zip.ZipInputStream
+import no.synth.kmpzip.zip.ZipFile
 
 private const val BUFFER_SIZE = 8192
 
@@ -124,25 +125,28 @@ private fun padLeft(s: String, w: Int): String = if (s.length >= w) s else " ".r
 
 private fun list(args: List<String>) {
     val cli = CliArgs(args)
-    require(cli.positional.isNotEmpty()) { "Usage: kmpzip list <file.zip> [-p password]" }
+    require(cli.positional.isNotEmpty()) { "Usage: kmpzip list <file.zip>" }
+
+    if (cli.password != null) {
+        printErr(
+            "Note: 'list' ignores -p — entry names and sizes come from the central " +
+                "directory, which is never encrypted. (Pass -p to 'unzip' to extract.)"
+        )
+    }
 
     val file = cli.resolve(cli.positional[0])
     require(exists(file)) { "File not found: $file" }
 
-    val source = SystemFileSystem.source(file).buffered()
-    val zis = ZipInputStream(source.asInputStream(), cli.password?.encodeToByteArray())
-
-    zis.use {
-        var headerPrinted = false
-        while (true) {
-            val entry = it.nextEntry ?: break
-            if (!headerPrinted) {
-                println("${padRight("Method", 8)}  ${padRight("Size", 12)}  ${padRight("Compressed", 12)}  Name")
-                println("-".repeat(60))
-                headerPrinted = true
-            }
-            it.drain()
-
+    // Read the central directory (random access) instead of streaming every entry:
+    // listing needs only metadata, and the central directory has accurate sizes for
+    // all entries — including data-descriptor ones a forward stream can't size without
+    // decoding. No password needed; filenames are not encrypted.
+    ZipFile(fileSeekableSource(file.toString())).use { zip ->
+        if (zip.entries.isNotEmpty()) {
+            println("${padRight("Method", 8)}  ${padRight("Size", 12)}  ${padRight("Compressed", 12)}  Name")
+            println("-".repeat(60))
+        }
+        for (entry in zip.entries) {
             val method = when (entry.method) {
                 0 -> "STORED"
                 8 -> "DEFLATED"
@@ -253,9 +257,4 @@ private fun InputStream.copyTo(out: OutputStream) {
         if (n == -1) break
         out.write(buf, 0, n)
     }
-}
-
-private fun InputStream.drain() {
-    val buf = ByteArray(BUFFER_SIZE)
-    while (read(buf, 0, buf.size) != -1) {}
 }

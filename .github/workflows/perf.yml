@@ -166,12 +166,16 @@ jobs:
       - name: Install reference tools (macOS)
         if: matrix.platform == 'macos'
         shell: bash
-        run: brew install gzip   # GNU gzip alongside the BSD /usr/bin/gzip
+        # GNU gzip alongside BSD /usr/bin/gzip; sevenzip provides 7zz for the listing
+        # bench (unzip/zipinfo are already present). Linux runners ship all three.
+        run: brew install gzip sevenzip
 
       - name: Install reference tools (Windows)
         if: matrix.platform == 'windows'
         shell: bash
-        run: choco install zip unzip -y --no-progress
+        # 7zip puts 7z on PATH for the listing bench. zipinfo isn't packaged for
+        # Windows, but `unzip -Z1` (already run) is the same Info-ZIP engine.
+        run: choco install zip unzip 7zip -y --no-progress
 
       - name: Compose tool arguments
         id: tools
