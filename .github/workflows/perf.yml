@@ -23,12 +23,12 @@ on:
         default: latest
       sizes:
         description: |
-          Comma-separated <kind>:<size> list, kind ∈ {text,rand,zero}.
-          Examples: "text:50M,rand:30M" or "text:200M,rand:200M,zero:500M"
+          Comma-separated <kind>:<size> list, kind ∈ {text,rand,zero,repeat}.
+          Examples: "text:50M,rand:30M" or "text:200M,rand:200M,zero:500M,repeat:200M"
         type: string
         default: text:200M,rand:200M,zero:500M
       trials:
-        description: Number of timed trials per measurement (min wins)
+        description: Timed trials per measurement (min reported; +1 discarded warmup; all kept in JSON)
         type: string
         default: "3"
 
@@ -67,9 +67,9 @@ jobs:
           PLATFORMS: ${{ steps.params.outputs.platforms }}
         run: |
           all='[
-            {"os":"ubuntu-latest","artifact":"kmpzip-linux-x64","bin":"bin/kmpzip-linux-x64","platform":"linux"},
-            {"os":"macos-latest","artifact":"kmpzip-macos-arm64","bin":"bin/kmpzip-macos-arm64","platform":"macos"},
-            {"os":"windows-latest","artifact":"kmpzip-windows-x64.exe","bin":"bin/kmpzip-windows-x64.exe","platform":"windows"}
+            {"os":"ubuntu-24.04","artifact":"kmpzip-linux-x64","bin":"bin/kmpzip-linux-x64","platform":"linux"},
+            {"os":"macos-15","artifact":"kmpzip-macos-arm64","bin":"bin/kmpzip-macos-arm64","platform":"macos"},
+            {"os":"windows-2025","artifact":"kmpzip-windows-x64.exe","bin":"bin/kmpzip-windows-x64.exe","platform":"windows"}
           ]'
           if [ "$PLATFORMS" = "all" ]; then
             filtered="$all"
@@ -94,6 +94,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+
+      - name: Install perf deps
+        shell: bash
+        # psutil enables peak-RSS sampling and total-RAM reporting in perf.py;
+        # the harness still runs without it (max_rss_bytes is null).
+        run: python -m pip install --quiet psutil
 
       - name: Download kmpzip (release)
         if: needs.setup.outputs.source == 'release'

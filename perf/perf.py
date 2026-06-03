@@ -24,10 +24,19 @@ import os
 import platform
 import random
 import shutil
+import statistics
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Optional: enables peak-RSS sampling and richer env (total RAM). Without it the
+# harness still runs; max_rss_bytes is reported as null. Install with
+# `pip install psutil` (the CI workflow does this).
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 # Windows console is cp1252 by default; force UTF-8 so any unicode in output
 # (arrows, set-membership glyphs, etc.) doesn't crash on encoding.
@@ -54,11 +63,14 @@ def make_corpus(path: Path, kind: str, size: int) -> None:
         return
     chunk = 1 << 20
     if kind == "rand":
+        # Seeded PRNG (not os.urandom) so the incompressible corpus is byte-identical
+        # across platforms and runs — removes one source of cross-run variance.
+        rng = random.Random(0x5EED)
         with path.open("wb") as f:
             remaining = size
             while remaining > 0:
                 n = min(chunk, remaining)
-                f.write(os.urandom(n))
+                f.write(rng.randbytes(n))
                 remaining -= n
     elif kind == "zero":
         buf = b"\x00" * chunk
@@ -67,6 +79,17 @@ def make_corpus(path: Path, kind: str, size: int) -> None:
             while remaining > 0:
                 n = min(chunk, remaining)
                 f.write(buf[:n])
+                remaining -= n
+    elif kind == "repeat":
+        # A fixed 64 KiB random block tiled to size. Highly compressible like
+        # `zero`, but via long back-references rather than the degenerate
+        # everything-matches case — a more realistic match-finder workload.
+        block = random.Random(0xBEEF).randbytes(64 * 1024)
+        with path.open("wb") as f:
+            remaining = size
+            while remaining > 0:
+                n = min(len(block), remaining)
+                f.write(block[:n])
                 remaining -= n
     elif kind == "text":
         # Seeded PRNG drawing from an English-frequency wordlist. Reproducible
@@ -103,17 +126,78 @@ def time_run(argv, cwd=None) -> tuple[float, int, str]:
     return time.perf_counter() - t0, r.returncode, r.stderr.decode("utf-8", "replace")
 
 
-def bench_min(prep, argv, trials: int, cwd=None) -> tuple[float, int, str]:
-    best = None
-    last_rc = 0
-    last_err = ""
+def _run_once(argv, cwd=None) -> tuple[float, int, str, int | None]:
+    """One timed invocation. Returns (secs, rc, stderr, peak_rss_bytes). peak_rss
+    is None unless psutil is available. Tools write little to stderr, so reading
+    it after exit can't deadlock the small pipe."""
+    if psutil is None:
+        t, rc, err = time_run(argv, cwd=cwd)
+        return t, rc, err, None
+    t0 = time.perf_counter()
+    proc = psutil.Popen(argv, cwd=cwd,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    peak = 0
+
+    def sample():
+        nonlocal peak
+        try:
+            rss = proc.memory_info().rss
+            for ch in proc.children(recursive=True):
+                try:
+                    rss += ch.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            if rss > peak:
+                peak = rss
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    while proc.poll() is None:
+        sample()
+        time.sleep(0.005)
+    sample()
+    err = proc.stderr.read() if proc.stderr else b""
+    secs = time.perf_counter() - t0
+    return secs, proc.returncode, err.decode("utf-8", "replace"), (peak or None)
+
+
+def measure(prep, argv, trials: int, nbytes: int = 0,
+            warmup: int = 1, cwd=None) -> dict:
+    """Run `warmup` discarded iterations, then `trials` timed ones. Keeps every
+    trial (not just the min) plus median, throughput (on nbytes of data moved),
+    and peak RSS, so version-over-version comparison has a stable absolute axis
+    and regressions that widen variance aren't hidden by an unchanged floor."""
+    last_rc, last_err = 0, ""
+    for _ in range(max(0, warmup)):
+        prep()
+        _run_once(argv, cwd=cwd)
+    times: list[float] = []
+    peak = None
     for _ in range(trials):
         prep()
-        t, rc, err = time_run(argv, cwd=cwd)
+        t, rc, err, rss = _run_once(argv, cwd=cwd)
+        times.append(t)
         last_rc, last_err = rc, err
-        if best is None or t < best:
-            best = t
-    return best or 0.0, last_rc, last_err
+        if rss is not None:
+            peak = rss if peak is None else max(peak, rss)
+    tmin = min(times) if times else 0.0
+    tmed = statistics.median(times) if times else 0.0
+    mb_s = (nbytes / (1024 * 1024) / tmin) if (nbytes and tmin > 0) else None
+    return {
+        "min": tmin,
+        "median": tmed,
+        "all": [round(x, 6) for x in times],
+        "mb_s": round(mb_s, 2) if mb_s is not None else None,
+        "max_rss_bytes": peak,
+        "rc": last_rc,
+        "err": last_err,
+    }
+
+
+def bench_min(prep, argv, trials: int, cwd=None) -> tuple[float, int, str]:
+    """Back-compat shim for the listing bench: just the min time."""
+    m = measure(prep, argv, trials, nbytes=0, cwd=cwd)
+    return m["min"], m["rc"], m["err"]
 
 
 def warm_cache(path: Path) -> None:
@@ -374,7 +458,7 @@ def _kmpzip_vs_cell(per_input: dict, other_name: str, has_size: bool, width: int
 
 
 def bench_compression(work: Path, corpora: list, tools: list, trials: int,
-                       results: dict) -> None:
+                       results: dict, warmup: int = 1) -> None:
     """For each input, time each tool's compress on a fresh copy. Records size."""
     family = tools[0]["family"]
     name_w = max(len(c["name"]) for c in corpora) + 2
@@ -402,6 +486,11 @@ def bench_compression(work: Path, corpora: list, tools: list, trials: int,
                 if work_src.exists():
                     work_src.unlink()
                 shutil.copy(src, work_src)
+                # Pre-fault the just-written copy so the tool's first read isn't
+                # cold — on Windows runners this is where Defender's on-access
+                # scan lands, and it scales with file size (worst on the 500M
+                # corpus). Warming here keeps it out of the timed window.
+                warm_cache(work_src)
                 if t["family"] == "gzip":
                     archive_path = work_src.with_suffix(work_src.suffix + ".gz")
                 else:
@@ -411,10 +500,14 @@ def bench_compression(work: Path, corpora: list, tools: list, trials: int,
 
             argv = t["compress_argv"](work_src)
             cwd = str(work_src.parent) if t["family"] == "zip" else None
-            secs, rc, err = bench_min(prep, argv, trials, cwd=cwd)
+            m = measure(prep, argv, trials, nbytes=c["size"], warmup=warmup, cwd=cwd)
             sz = archive_path.stat().st_size if archive_path and archive_path.exists() else -1
-            per_input["tools"][t["name"]] = {"size": sz, "secs": secs, "rc": rc}
-            line += f" {fmt_bytes(sz):>14} {fmt_secs(secs):>10}"
+            per_input["tools"][t["name"]] = {
+                "size": sz, "secs": m["min"], "secs_median": m["median"],
+                "secs_all": m["all"], "mb_s": m["mb_s"],
+                "max_rss_bytes": m["max_rss_bytes"], "rc": m["rc"],
+            }
+            line += f" {fmt_bytes(sz):>14} {fmt_secs(m['min']):>10}"
             # cleanup
             for p in (work_src, archive_path):
                 if p and p.exists():
@@ -427,7 +520,7 @@ def bench_compression(work: Path, corpora: list, tools: list, trials: int,
 
 
 def bench_decompression(work: Path, corpora: list, tools: list, trials: int,
-                         results: dict) -> None:
+                         results: dict, warmup: int = 1) -> None:
     """Per input, produce one canonical archive with the FIRST tool, time each
     tool's decompress."""
     family = tools[0]["family"]
@@ -463,6 +556,7 @@ def bench_decompression(work: Path, corpora: list, tools: list, trials: int,
                 if work_arch.exists():
                     work_arch.unlink()
                 shutil.copy(canonical_archive, work_arch)
+                warm_cache(work_arch)
                 # gzip removes input on decompress; zip extracts to a dir
                 if t["family"] == "zip":
                     if out_dir.exists():
@@ -478,9 +572,13 @@ def bench_decompression(work: Path, corpora: list, tools: list, trials: int,
             else:
                 argv = t["decompress_argv"](work_arch, out_dir)
 
-            secs, rc, err = bench_min(prep, argv, trials)
-            per_input["tools"][t["name"]] = {"secs": secs, "rc": rc}
-            line += f" {fmt_secs(secs):>10}"
+            m = measure(prep, argv, trials, nbytes=c["size"], warmup=warmup)
+            per_input["tools"][t["name"]] = {
+                "secs": m["min"], "secs_median": m["median"],
+                "secs_all": m["all"], "mb_s": m["mb_s"],
+                "max_rss_bytes": m["max_rss_bytes"], "rc": m["rc"],
+            }
+            line += f" {fmt_secs(m['min']):>10}"
 
             # cleanup
             if work_arch.exists():
@@ -608,6 +706,75 @@ def parse_zip_spec(spec: str) -> tuple[str, str, str]:
     return name, zip_p, unzip_p
 
 
+# ---- environment & baseline --------------------------------------------------
+
+def _cpu_brand() -> str:
+    try:
+        if sys.platform.startswith("linux"):
+            for line in Path("/proc/cpuinfo").read_text().splitlines():
+                if line.lower().startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+        elif sys.platform == "darwin":
+            r = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+    except Exception:
+        pass
+    return platform.processor() or os.environ.get("PROCESSOR_IDENTIFIER", "") or "unknown"
+
+
+def collect_env(work: Path) -> dict:
+    """Environment block. Records enough (CPU, cores, RAM, runner image) to
+    explain a 'slow this run' after the fact instead of guessing."""
+    env = {
+        "platform": platform.platform(),
+        "python": sys.version.split()[0],
+        "machine": platform.machine(),
+        "system": platform.system(),
+        "cpu": _cpu_brand(),
+        "logical_cpus": os.cpu_count(),
+        "total_ram_bytes": psutil.virtual_memory().total if psutil else None,
+        # GitHub runners set these; harmless empties off-CI.
+        "runner_image": os.environ.get("ImageOS", "") or os.environ.get("ImageVersion", ""),
+        "free_disk_bytes": shutil.disk_usage(work).free,
+        "psutil": bool(psutil),
+    }
+    return env
+
+
+def compare_to_baseline(out: dict, baseline_path: str, threshold: float) -> bool:
+    """Warn-only throughput comparison of kmpzip against a prior JSON result.
+    Returns False if any kmpzip throughput dropped by more than `threshold`
+    (e.g. 0.10 = 10%); the caller decides whether to treat that as fatal."""
+    try:
+        base = json.loads(Path(baseline_path).read_text())
+    except (OSError, ValueError) as e:
+        print(f"WARN: could not read baseline {baseline_path!r}: {e}", file=sys.stderr)
+        return True
+    print(f"=== Regression check vs baseline ({baseline_path}) ===")
+    print(f"  kmpzip throughput, this run vs baseline (threshold {threshold:.0%})")
+    ok = True
+    for op in ("compression", "decompression"):
+        for family in ("gzip", "zip"):
+            cur = out.get(op, {}).get(family, {})
+            old = base.get(op, {}).get(family, {})
+            for cname, cur_row in cur.items():
+                new_mb = cur_row.get("tools", {}).get("kmpzip", {}).get("mb_s")
+                old_mb = old.get(cname, {}).get("tools", {}).get("kmpzip", {}).get("mb_s")
+                if not new_mb or not old_mb:
+                    continue
+                delta = new_mb / old_mb - 1.0
+                flag = ""
+                if delta < -threshold:
+                    flag = "  <-- REGRESSION"
+                    ok = False
+                print(f"  {op[:4]}/{family:<4} {cname:<16} "
+                      f"{old_mb:8.1f} -> {new_mb:8.1f} MB/s  {delta:+6.1%}{flag}")
+    print()
+    return ok
+
+
 # ---- main --------------------------------------------------------------------
 
 def main() -> int:
@@ -618,11 +785,20 @@ def main() -> int:
     ap.add_argument("--zip", action="append", default=[], dest="zip_specs",
                     help="zip tool: 'name=zip_path' (unzip inferred as sibling). Repeatable.")
     ap.add_argument("--workdir", default="perf-work")
-    ap.add_argument("--trials", type=int, default=3)
+    ap.add_argument("--trials", type=int, default=5,
+                    help="Timed trials per measurement (min reported; all kept in JSON)")
+    ap.add_argument("--warmup", type=int, default=1,
+                    help="Discarded warmup runs before timing (absorbs cold-cache/page-fault cost)")
     ap.add_argument("--sizes", default="text:200M,rand:200M,zero:500M",
-                    help="Comma-separated list of <kind>:<size>, kind in {text,rand,zero}")
+                    help="Comma-separated <kind>:<size>, kind in {text,rand,zero,repeat}")
     ap.add_argument("--json-out", default=None,
                     help="Optional path to write structured JSON results")
+    ap.add_argument("--baseline", default=None,
+                    help="Optional prior JSON result to compare kmpzip throughput against")
+    ap.add_argument("--regression-threshold", type=float, default=0.10,
+                    help="Throughput drop fraction that counts as a regression (default 0.10)")
+    ap.add_argument("--fail-on-regression", action="store_true",
+                    help="Exit non-zero if --baseline shows a throughput regression")
     args = ap.parse_args()
 
     work = Path(args.workdir).resolve()
@@ -673,14 +849,9 @@ def main() -> int:
                          "path": work / name})
 
     out = {
-        "env": {
-            "platform": platform.platform(),
-            "python": sys.version.split()[0],
-            "machine": platform.machine(),
-            "system": platform.system(),
-            "free_disk_bytes": shutil.disk_usage(work).free,
-        },
+        "env": collect_env(work),
         "trials": args.trials,
+        "warmup": args.warmup,
         "corpora": [{k: c[k] for k in ("name", "kind", "size")} for c in corpora],
         "tools": {
             "gzip": [{"name": t["name"], "version": t["version"], "bin": t["bin"]}
@@ -730,9 +901,9 @@ def main() -> int:
     # --- compression / decompression -----------------------------------------
     for family, tools in (("gzip", gzip_tools), ("zip", zip_tools)):
         bench_compression(work, corpora, tools, args.trials,
-                          out["compression"][family])
+                          out["compression"][family], warmup=args.warmup)
         bench_decompression(work, corpora, tools, args.trials,
-                            out["decompression"][family])
+                            out["decompression"][family], warmup=args.warmup)
 
     # --- listing (the "iterate entries is slow" issue) ------------------------
     if not bench_listing(work, kmpzip_bin, args.trials, out):
@@ -741,6 +912,11 @@ def main() -> int:
     if args.json_out:
         Path(args.json_out).write_text(json.dumps(out, indent=2, default=str))
         print(f"JSON results written to {args.json_out}")
+
+    if args.baseline:
+        if not compare_to_baseline(out, args.baseline, args.regression_threshold):
+            if args.fail_on_regression:
+                overall_ok = False
 
     return 0 if overall_ok else 1
 
