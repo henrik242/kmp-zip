@@ -7,3 +7,4 @@ local.properties
 .env
 .DS_Store
 __pycache__
+.claude/

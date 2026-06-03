@@ -14,15 +14,23 @@ internal class WinZipAesCipher(
     strength: AesStrength,
 ) {
     private val aesKey: ByteArray
+    private val aesEcb: AesEcb
     private val hmac: HmacSha1Engine
 
     /** 2-byte password verification value derived from the password+salt. */
     val passwordVerification: ByteArray
 
-    // AES-CTR state
+    // AES-CTR state. The counter is a 128-bit little-endian value incremented before
+    // each block (so the first keystream block uses counter == 1, per WinZip AES).
     private val counterBlock = ByteArray(AES_BLOCK_SIZE)
-    private var keystreamBuffer = ByteArray(AES_BLOCK_SIZE)
-    private var keystreamPos = AES_BLOCK_SIZE // force new keystream generation on first use
+    // Leftover keystream from the last partial block, consumed before generating more.
+    private val keystreamBuffer = ByteArray(AES_BLOCK_SIZE)
+    private var keystreamPos = AES_BLOCK_SIZE // empty: force generation on first use
+
+    // Reused scratch for bulk keystream generation, grown to the largest crypt() request.
+    // Counter blocks are built here, ECB-encrypted in one call, then XORed into the output.
+    private var counterScratch = ByteArray(0)
+    private var keystreamScratch = ByteArray(0)
 
     init {
         val keyLen = strength.keyBytes
@@ -30,6 +38,7 @@ internal class WinZipAesCipher(
         val derivedKey = pbkdf2HmacSha1(password, salt, PBKDF2_ITERATIONS, derivedKeyLen)
 
         aesKey = derivedKey.copyOfRange(0, keyLen)
+        aesEcb = AesEcb(aesKey)
         val hmacKey = derivedKey.copyOfRange(keyLen, 2 * keyLen)
         passwordVerification = derivedKey.copyOfRange(2 * keyLen, 2 * keyLen + 2)
 
@@ -73,9 +82,13 @@ internal class WinZipAesCipher(
      */
     fun getAuthCode(): ByteArray {
         val authCode = hmac.doFinal().copyOfRange(0, AUTH_CODE_LENGTH)
-        // Zero sensitive state
+        // Zero sensitive state, including the retained AES key schedule inside aesEcb
+        // (its expanded round keys are invertible to the AES key).
         aesKey.fill(0)
+        aesEcb.clear()
         keystreamBuffer.fill(0)
+        keystreamScratch.fill(0)
+        counterScratch.fill(0)
         counterBlock.fill(0)
         return authCode
     }
@@ -85,15 +98,48 @@ internal class WinZipAesCipher(
         output: ByteArray, outputOffset: Int,
         len: Int,
     ) {
-        for (i in 0 until len) {
-            if (keystreamPos >= AES_BLOCK_SIZE) {
-                incrementCounter()
-                keystreamBuffer = aesEcbEncryptBlock(aesKey, counterBlock)
-                keystreamPos = 0
-            }
-            output[outputOffset + i] =
-                (input[inputOffset + i].toInt() xor keystreamBuffer[keystreamPos].toInt()).toByte()
+        var pos = 0
+
+        // 1. Drain any leftover keystream from the previous call's trailing partial block.
+        while (keystreamPos < AES_BLOCK_SIZE && pos < len) {
+            output[outputOffset + pos] =
+                (input[inputOffset + pos].toInt() xor keystreamBuffer[keystreamPos].toInt()).toByte()
             keystreamPos++
+            pos++
+        }
+
+        // 2. Bulk-encrypt all whole blocks in one AES call instead of one per 16 bytes.
+        val fullBlocks = (len - pos) / AES_BLOCK_SIZE
+        if (fullBlocks > 0) {
+            val needed = fullBlocks * AES_BLOCK_SIZE
+            if (counterScratch.size < needed) {
+                counterScratch = ByteArray(needed)
+                keystreamScratch = ByteArray(needed)
+            }
+            for (b in 0 until fullBlocks) {
+                incrementCounter()
+                counterBlock.copyInto(counterScratch, b * AES_BLOCK_SIZE)
+            }
+            aesEcb.encryptBlocks(counterScratch, keystreamScratch, fullBlocks)
+            for (i in 0 until needed) {
+                output[outputOffset + pos + i] =
+                    (input[inputOffset + pos + i].toInt() xor keystreamScratch[i].toInt()).toByte()
+            }
+            pos += needed
+        }
+
+        // 3. Trailing partial block: generate one keystream block and keep the remainder
+        //    in keystreamBuffer for the next call.
+        if (pos < len) {
+            incrementCounter()
+            aesEcb.encryptBlocks(counterBlock, keystreamBuffer, 1)
+            keystreamPos = 0
+            while (pos < len) {
+                output[outputOffset + pos] =
+                    (input[inputOffset + pos].toInt() xor keystreamBuffer[keystreamPos].toInt()).toByte()
+                keystreamPos++
+                pos++
+            }
         }
     }
 

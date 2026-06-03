@@ -63,9 +63,6 @@ class ZipInputStream(
     // AES decryption state
     private var aesCipher: WinZipAesCipher? = null
     private var aesRemainingEncryptedBytes: Long = 0
-    private var aesDecryptBuf = ByteArray(0) // buffer for decrypted data
-    private var aesDecryptBufPos = 0
-    private var aesDecryptBufLen = 0
     private var actualCompressionMethod: Int = -1
 
     // Legacy (ZipCrypto) decryption state
@@ -485,11 +482,12 @@ class ZipInputStream(
         }
         if (toRead <= 0) return -1
 
-        val encBuf = ByteArray(toRead)
-        val n = readRaw(encBuf, 0, toRead)
+        // Read ciphertext into the inflater buffer and decrypt in place — AES-CTR XOR is
+        // per-byte independent, so no separate ciphertext buffer is needed.
+        val n = readRaw(inflaterBuf, 0, toRead)
         if (n == -1) return -1
 
-        cipher.decrypt(encBuf, 0, inflaterBuf, 0, n)
+        cipher.decrypt(inflaterBuf, 0, inflaterBuf, 0, n)
         if (aesRemainingEncryptedBytes != Long.MAX_VALUE) {
             aesRemainingEncryptedBytes -= n
         }
@@ -515,13 +513,12 @@ class ZipInputStream(
         return n
     }
 
-    /** Read and decrypt bytes directly into the output buffer. */
+    /** Read and decrypt bytes directly into the output buffer (in place — no scratch buffer). */
     private fun readAndDecrypt(b: ByteArray, off: Int, len: Int): Int {
         val cipher = aesCipher ?: return readRaw(b, off, len)
-        val encBuf = ByteArray(len)
-        val n = readRaw(encBuf, 0, len)
+        val n = readRaw(b, off, len)
         if (n == -1) return -1
-        cipher.decrypt(encBuf, 0, b, off, n)
+        cipher.decrypt(b, off, b, off, n)
         return n
     }
 

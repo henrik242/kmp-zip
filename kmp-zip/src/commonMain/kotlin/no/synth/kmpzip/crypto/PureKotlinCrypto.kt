@@ -110,28 +110,52 @@ private fun mixColumns(s: ByteArray) {
     }
 }
 
-internal fun aesEcbEncryptBlockImpl(key: ByteArray, block: ByteArray): ByteArray {
-    require(block.size == AES_BLOCK_LEN) { "AES block must be $AES_BLOCK_LEN bytes" }
-    require(key.size == 16 || key.size == 24 || key.size == 32) { "Invalid AES key size: ${key.size}" }
-    val w = keyExpansion(key)
-    val nr = key.size / 4 + 6
-    val s = block.copyOf()
-    try {
-        addRoundKey(s, w, 0)
-        for (round in 1 until nr) {
+/**
+ * Pure-Kotlin AES-ECB encryptor. Expands the key schedule once at construction and
+ * reuses it across blocks, instead of re-deriving it per 16-byte block — the per-block
+ * expansion was the dominant cost when decrypting large entries on native/wasm targets.
+ */
+internal class AesEcbImpl(key: ByteArray) {
+    init {
+        require(key.size == 16 || key.size == 24 || key.size == 32) { "Invalid AES key size: ${key.size}" }
+    }
+
+    private val w = keyExpansion(key)
+    private val nr = key.size / 4 + 6
+    private val s = ByteArray(AES_BLOCK_LEN)
+
+    fun encryptBlocks(src: ByteArray, dst: ByteArray, blockCount: Int) {
+        for (b in 0 until blockCount) {
+            val off = b * AES_BLOCK_LEN
+            src.copyInto(s, 0, off, off + AES_BLOCK_LEN)
+            addRoundKey(s, w, 0)
+            for (round in 1 until nr) {
+                subBytes(s)
+                shiftRows(s)
+                mixColumns(s)
+                addRoundKey(s, w, round)
+            }
             subBytes(s)
             shiftRows(s)
-            mixColumns(s)
-            addRoundKey(s, w, round)
+            addRoundKey(s, w, nr)
+            s.copyInto(dst, off)
         }
-        subBytes(s)
-        shiftRows(s)
-        addRoundKey(s, w, nr)
-        return s
-    } finally {
-        // Round keys can be inverted to recover the AES key; clear before returning.
-        w.fill(0)
     }
+
+    /** Zeroes the expanded round keys (invertible to the AES key) and the work block. */
+    fun clear() {
+        w.fill(0)
+        s.fill(0)
+    }
+}
+
+internal fun aesEcbEncryptBlockImpl(key: ByteArray, block: ByteArray): ByteArray {
+    require(block.size == AES_BLOCK_LEN) { "AES block must be $AES_BLOCK_LEN bytes" }
+    val out = block.copyOf()
+    val aes = AesEcbImpl(key)
+    aes.encryptBlocks(out, out, 1)
+    aes.clear()
+    return out
 }
 
 internal class Sha1Impl {

@@ -6,21 +6,39 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
-// AES-ECB here is the single-block primitive used to build the AES-CTR keystream
-// in WinZipAesCipher (WinZip AE-2 / ZIP AES). Authentication is provided separately
+// AES-ECB here is the block primitive used to build the AES-CTR keystream in
+// WinZipAesCipher (WinZip AE-2 / ZIP AES). Authentication is provided separately
 // by HMAC-SHA1 (encrypt-then-MAC). The ZIP AES format is fixed; GCM is not an option.
-private val cipherThreadLocal = ThreadLocal.withInitial {
-    Cipher.getInstance("AES/ECB/NoPadding") // lgtm[java/weak-cryptographic-algorithm]
-}
-
 private val secureRandom = java.security.SecureRandom()
 
-internal actual fun aesEcbEncryptBlock(key: ByteArray, block: ByteArray): ByteArray {
-    require(block.size == 16) { "AES block must be 16 bytes" }
-    require(key.size == 16 || key.size == 24 || key.size == 32) { "Invalid AES key size: ${key.size}" }
-    val cipher = cipherThreadLocal.get()
-    cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"))
-    return cipher.doFinal(block)
+internal actual class AesEcb actual constructor(key: ByteArray) {
+    private val keyLen = key.size
+
+    init {
+        require(keyLen == 16 || keyLen == 24 || keyLen == 32) { "Invalid AES key size: $keyLen" }
+    }
+
+    // Initialized once: the key schedule is expanded here, not on every block. For
+    // ECB/NoPadding, doFinal resets the cipher to this post-init state, so it can be
+    // reused for the next chunk without re-init.
+    private val cipher = Cipher.getInstance("AES/ECB/NoPadding").apply { // lgtm[java/weak-cryptographic-algorithm]
+        init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"))
+    }
+
+    actual fun encryptBlocks(src: ByteArray, dst: ByteArray, blockCount: Int) {
+        if (blockCount <= 0) return
+        cipher.doFinal(src, 0, blockCount * 16, dst, 0)
+    }
+
+    actual fun clear() {
+        // The provider keeps the expanded key internally and exposes no wipe; re-keying
+        // with zeros is the best we can do to overwrite the live schedule.
+        try {
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(ByteArray(keyLen), "AES"))
+        } catch (_: Exception) {
+            // Best-effort only.
+        }
+    }
 }
 
 internal actual class HmacSha1Engine actual constructor(key: ByteArray) {

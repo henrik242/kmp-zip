@@ -6,35 +6,45 @@ import platform.Security.SecRandomCopyBytes
 import platform.Security.kSecRandomDefault
 
 @OptIn(ExperimentalForeignApi::class)
-internal actual fun aesEcbEncryptBlock(key: ByteArray, block: ByteArray): ByteArray {
-    require(block.size == 16) { "AES block must be 16 bytes" }
-    val output = ByteArray(16)
-    key.usePinned { keyPinned ->
-        block.usePinned { blockPinned ->
-            output.usePinned { outPinned ->
-                memScoped {
-                    val outMovedPtr = alloc<ULongVar>()
-                    val status = CCCrypt(
-                        kCCEncrypt,
-                        kCCAlgorithmAES128,
-                        kCCOptionECBMode,
-                        keyPinned.addressOf(0),
-                        key.size.toULong(),
-                        null,
-                        blockPinned.addressOf(0),
-                        block.size.toULong(),
-                        outPinned.addressOf(0),
-                        output.size.toULong(),
-                        outMovedPtr.ptr,
-                    )
-                    if (status != kCCSuccess) {
-                        throw IllegalStateException("CCCrypt AES-ECB encrypt failed: $status")
+internal actual class AesEcb actual constructor(key: ByteArray) {
+    // Own a private copy of the key so the caller is free to zero theirs. CCCrypt is a
+    // one-shot, so the key is supplied per call; encrypting a whole chunk of counter
+    // blocks in a single CCCrypt amortizes the call overhead from per-block to per-chunk.
+    private val key = key.copyOf()
+
+    actual fun encryptBlocks(src: ByteArray, dst: ByteArray, blockCount: Int) {
+        if (blockCount <= 0) return
+        val len = (blockCount * 16).toULong()
+        key.usePinned { keyPinned ->
+            src.usePinned { srcPinned ->
+                dst.usePinned { dstPinned ->
+                    memScoped {
+                        val outMovedPtr = alloc<ULongVar>()
+                        val status = CCCrypt(
+                            kCCEncrypt,
+                            kCCAlgorithmAES128,
+                            kCCOptionECBMode,
+                            keyPinned.addressOf(0),
+                            key.size.toULong(),
+                            null,
+                            srcPinned.addressOf(0),
+                            len,
+                            dstPinned.addressOf(0),
+                            len,
+                            outMovedPtr.ptr,
+                        )
+                        if (status != kCCSuccess) {
+                            throw IllegalStateException("CCCrypt AES-ECB encrypt failed: $status")
+                        }
                     }
                 }
             }
         }
     }
-    return output
+
+    actual fun clear() {
+        key.fill(0)
+    }
 }
 
 @OptIn(ExperimentalForeignApi::class)

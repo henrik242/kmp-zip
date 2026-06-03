@@ -5,8 +5,14 @@ package no.synth.kmpzip.crypto
 // AES / HMAC-SHA1 / PBKDF2 in commonMain. JVM and Apple targets keep faster
 // platform impls. `secureRandomBytes` stays per-target because the random
 // source differs (/dev/urandom, BCryptGenRandom, Web Crypto).
-internal actual fun aesEcbEncryptBlock(key: ByteArray, block: ByteArray): ByteArray =
-    aesEcbEncryptBlockImpl(key, block)
+internal actual class AesEcb actual constructor(key: ByteArray) {
+    private val impl = AesEcbImpl(key)
+
+    actual fun encryptBlocks(src: ByteArray, dst: ByteArray, blockCount: Int) =
+        impl.encryptBlocks(src, dst, blockCount)
+
+    actual fun clear() = impl.clear()
+}
 
 internal actual class HmacSha1Engine actual constructor(key: ByteArray) {
     private val impl = HmacSha1Impl(key)
