@@ -492,13 +492,30 @@ The helpers are not provided for the `wasmJs` target — browser wasm has no fil
 
 The `kmp-zip-cli` module provides a command-line tool for ZIP and GZIP operations, powered by the core library.
 
+### Installing
+
+`kmpzip` is [available through Homebrew](https://github.com/henrik242/homebrew-brew) on macOS and Linux:
+
+```sh
+brew install henrik242/brew/kmpzip
+```
+
+Prebuilt binaries for macOS, Linux, and Windows are also attached to each [GitHub release](https://github.com/henrik242/kmp-zip/releases).
+
+Alternatively, build a native binary from source:
+
+```sh
+./gradlew :kmp-zip-cli:linkReleaseExecutableMacosArm64   # or MacosX64, LinuxX64, LinuxArm64, MingwX64
+kmp-zip-cli/build/bin/macosArm64/releaseExecutable/kmpzip-macos-arm64 <command> [options] [args]
+```
+
+Hosts without a native target can run the CLI on the JVM: `./gradlew :kmp-zip-cli:jvmRun --args="list archive.zip"`.
+
 ### Running
 
 ```sh
-./kmpzip <command> [options] [args]
+kmpzip <command> [options] [args]
 ```
-
-The `./kmpzip` wrapper picks a native binary for the host (`macosArm64`, `linuxX64`, `linuxArm64`) and execs it directly — no JVM startup. The first invocation lazily builds the binary via Gradle; subsequent runs are instant. Hosts without a native binary fall back to `./gradlew :kmp-zip-cli:jvmRun`. On Windows, use `kmpzip.cmd` instead, which builds and execs the `mingwX64` `.exe`.
 
 **Password encoding:** the `-p` argument is encoded as UTF-8. ASCII passwords interoperate with all common ZIP tools. Non-ASCII passwords work between kmp-zip's own implementations (JVM, native, library API), but may not match `unzip` / Info-ZIP, which use the system locale / CP437.
 
@@ -519,34 +536,26 @@ The `./kmpzip` wrapper picks a native binary for the host (`macosArm64`, `linuxX
 
 ```sh
 # List contents of a ZIP file
-./kmpzip list archive.zip
+kmpzip list archive.zip
 
 # Extract to a specific directory
-./kmpzip unzip archive.zip -d output/
+kmpzip unzip archive.zip -d output/
 
 # Create a ZIP from files and directories
-./kmpzip zip archive.zip file.txt src/
+kmpzip zip archive.zip file.txt src/
 
 # Create an AES-encrypted ZIP (default)
-./kmpzip zip secret.zip -p mypassword file.txt
+kmpzip zip secret.zip -p mypassword file.txt
 
 # Create a legacy ZipCrypto-encrypted ZIP (compatible with macOS Finder, Windows Explorer)
-./kmpzip zip compat.zip -p mypassword --legacy file.txt
+kmpzip zip compat.zip -p mypassword --legacy file.txt
 
 # Extract an encrypted ZIP (auto-detects AES or legacy)
-./kmpzip unzip secret.zip -p mypassword -d output/
+kmpzip unzip secret.zip -p mypassword -d output/
 
 # GZIP compress / decompress
-./kmpzip gzip largefile.txt
-./kmpzip gunzip largefile.txt.gz
-```
-
-### Installing
-
-`kmpzip` is [available through Homebrew](https://github.com/henrik242/homebrew-brew) on macOS and Linux:
-
-```sh
-brew install henrik242/brew/kmpzip
+kmpzip gzip largefile.txt
+kmpzip gunzip largefile.txt.gz
 ```
 
 ## Building
