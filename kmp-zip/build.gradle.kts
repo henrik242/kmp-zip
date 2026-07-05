@@ -76,7 +76,7 @@ val generateNativeNonAppleTestData = registerTemplatedTestData(
 // path" trick doesn't work. Embed every fixture as base64 in a generated Kotlin
 // source file; the test code decodes on demand. ~92 KB of fixtures → ~125 KB of
 // source, only in the test klib.
-val generateWasmJsTestData by tasks.registering {
+val generateWasmJsTestData = tasks.register("generateWasmJsTestData") {
     val resDir = resourceDir
     val outputDir = layout.buildDirectory.dir("generated/wasmJsTestData/kotlin")
     inputs.dir(resDir)
@@ -142,7 +142,7 @@ kotlin {
         // Pure-Kotlin actuals (IO streams, gzip wrappers) shared by every
         // non-JVM target. Named to match kotlin-stdlib's own `commonNonJvmMain`
         // fragment so KGP merges them and skips the duplicate-klib warning.
-        val commonNonJvmMain by creating { dependsOn(sourceSets["commonMain"]) }
+        val commonNonJvmMain = create("commonNonJvmMain") { dependsOn(sourceSets["commonMain"]) }
         sourceSets["nativeMain"].dependsOn(commonNonJvmMain)
         sourceSets["wasmJsMain"].apply {
             dependsOn(commonNonJvmMain)
@@ -155,14 +155,14 @@ kotlin {
         // Holds the AES / HMAC / PBKDF2 wrappers that delegate to the pure-Kotlin
         // crypto in commonMain. Shared by every target without a platform crypto
         // library (linux/mingw native + wasmJs). Apple/JVM use platform impls.
-        val pureKotlinCryptoMain by creating { dependsOn(sourceSets["commonMain"]) }
+        val pureKotlinCryptoMain = create("pureKotlinCryptoMain") { dependsOn(sourceSets["commonMain"]) }
         sourceSets["wasmJsMain"].dependsOn(pureKotlinCryptoMain)
 
-        val nativeNonAppleMain by creating {
+        val nativeNonAppleMain = create("nativeNonAppleMain") {
             dependsOn(sourceSets["nativeMain"])
             dependsOn(pureKotlinCryptoMain)
         }
-        val nativeNonAppleTest by creating { dependsOn(sourceSets["nativeTest"]) }
+        val nativeNonAppleTest = create("nativeNonAppleTest") { dependsOn(sourceSets["nativeTest"]) }
         listOf("linuxX64", "linuxArm64", "mingwX64").forEach { target ->
             sourceSets["${target}Main"].dependsOn(nativeNonAppleMain)
             sourceSets["${target}Test"].dependsOn(nativeNonAppleTest)

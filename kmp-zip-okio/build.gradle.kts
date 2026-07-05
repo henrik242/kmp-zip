@@ -47,7 +47,7 @@ kotlin {
         // Tests that need a separate thread to fire timers while a busy body runs
         // (e.g. `withTimeout` cancelling an in-flight zip). wasmJs is single-threaded
         // — the timer can't fire until the body suspends — so it's excluded here.
-        val multiThreadedTest by creating { dependsOn(commonTest.get()) }
+        val multiThreadedTest = create("multiThreadedTest") { dependsOn(commonTest.get()) }
         jvmTest { dependsOn(multiThreadedTest) }
         nativeTest { dependsOn(multiThreadedTest) }
     }

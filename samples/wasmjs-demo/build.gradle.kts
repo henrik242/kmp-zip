@@ -15,7 +15,7 @@ repositories {
 val sharedTestdataDir = rootProject.layout.projectDirectory.dir("kmp-zip/src/commonTest/resources/testdata")
 val sharedTestdataMapping = sharedTestdataDir.file("mapping.properties")
 
-val generateSampleTestFixtures by tasks.registering {
+val generateSampleTestFixtures = tasks.register("generateSampleTestFixtures") {
     val outputDir = layout.buildDirectory.dir("generated/sampleFixtures/kotlin")
     inputs.dir(sharedTestdataDir)
     outputs.dir(outputDir)
