@@ -1,5 +1,5 @@
 [versions]
-kotlin = "2.4.0"
+kotlin = "2.4.10"
 kotlinx-coroutines = "1.11.0"
 kotlinx-io = "0.9.1"
 okio = "3.17.0"
