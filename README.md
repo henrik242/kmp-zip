@@ -79,13 +79,13 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:0.12.2")
+                implementation("no.synth:kmp-zip:0.13.0")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:0.12.2")
+                implementation("no.synth:kmp-zip-kotlinx:0.13.0")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:0.12.2")
+                implementation("no.synth:kmp-zip-okio:0.13.0")
             }
         }
     }
@@ -117,6 +117,7 @@ kotlin {
 | `ZipFile(ByteArray, password?)` | Convenience factory |
 | `ZipOutputStream(OutputStream, password?, encryption?, aesStrength?)` | Writes ZIP entries — `putNextEntry()`, `closeEntry()`, `write()`, `finish()`, `setMethod()`, `setLevel()`. Pass a password to encrypt all entries. |
 | `ZipEntry` | Entry metadata — `name`, `size`, `compressedSize`, `crc`, `method`, `isDirectory`, `time`, `comment`, `extra` |
+| `isZip(ByteArray)` | Four-byte sniff: `true` if the data starts with a local-file-header or end-of-central-directory signature. Not validation. |
 | `ZipConstants` | `STORED = 0`, `DEFLATED = 8` |
 | `ZipEncryption` | `AES` (default, strong), `LEGACY` (PKWare traditional, for compatibility) |
 | `AesStrength` | `AES_128`, `AES_192`, `AES_256` (default) |
@@ -137,6 +138,7 @@ kotlin {
 | `GzipInputStream(InputStream)` | Decompresses a GZIP stream — `read()`, `available()`, `close()` |
 | `GzipInputStream(ByteArray)` | Convenience factory |
 | `GzipOutputStream(OutputStream)` | Compresses data in GZIP format — `write()`, `finish()`, `flush()`, `close()` |
+| `isGzip(ByteArray)` | Two-byte sniff: `true` if the data starts with the GZIP magic `0x1f 0x8b`. Not validation. |
 
 ### `kmp-zip-kotlinx` — `no.synth.kmpzip.kotlinx`
 
@@ -573,8 +575,8 @@ Requires JDK 21 and Xcode (for iOS targets).
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v0.12.2
-git push origin v0.12.2
+git tag v0.13.0
+git push origin v0.13.0
 ```
 
 ## License

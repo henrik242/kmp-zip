@@ -6,7 +6,7 @@ plugins {
 
 allprojects {
     group = "no.synth"
-    version = "0.12.2"
+    version = "0.13.0"
 
     apply(plugin = "com.github.ben-manes.versions")
 
