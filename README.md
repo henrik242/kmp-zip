@@ -21,7 +21,7 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 
 - **JVM** (also consumable from Android projects)
 - **iosArm64**, **iosSimulatorArm64**
-- **macosArm64**, **macosX64**
+- **macosArm64**
 - **linuxX64**, **linuxArm64**
 - **mingwX64**
 - **wasmJs** (browser, Node 20+) — see [wasmJs notes](#wasmjs-notes) below
@@ -507,7 +507,7 @@ Prebuilt binaries for macOS, Linux, and Windows are also attached to each [GitHu
 Alternatively, build a native binary from source:
 
 ```sh
-./gradlew :kmp-zip-cli:linkReleaseExecutableMacosArm64   # or MacosX64, LinuxX64, LinuxArm64, MingwX64
+./gradlew :kmp-zip-cli:linkReleaseExecutableMacosArm64   # or LinuxX64, LinuxArm64, MingwX64
 kmp-zip-cli/build/bin/macosArm64/releaseExecutable/kmpzip-macos-arm64 <command> [options] [args]
 ```
 
