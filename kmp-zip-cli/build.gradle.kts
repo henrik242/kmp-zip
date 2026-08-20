@@ -11,6 +11,7 @@ repositories {
 }
 
 kotlin {
+    jvmToolchain(8)
     jvm {
         mainRun {
             mainClass.set("no.synth.kmpzip.cli.MainKt")

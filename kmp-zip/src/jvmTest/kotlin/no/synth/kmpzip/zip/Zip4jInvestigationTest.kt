@@ -359,7 +359,7 @@ class Zip4jInvestigationTest {
         val entry = zip4jInput.nextEntry
         assertNotNull(entry)
         assertEquals("kmpzip.txt", entry.fileName)
-        assertEquals(content, zip4jInput.readAllBytes().decodeToString())
+        assertEquals(content, zip4jInput.readBytes().decodeToString())
         assertNull(zip4jInput.nextEntry)
         zip4jInput.close()
     }
@@ -387,7 +387,7 @@ class Zip4jInvestigationTest {
             val entry = zip4jInput.nextEntry
             assertNotNull(entry, "Expected entry: $expectedName")
             assertEquals(expectedName, entry.fileName)
-            assertEquals(expectedContent, zip4jInput.readAllBytes().decodeToString())
+            assertEquals(expectedContent, zip4jInput.readBytes().decodeToString())
         }
         assertNull(zip4jInput.nextEntry)
         zip4jInput.close()
@@ -410,7 +410,7 @@ class Zip4jInvestigationTest {
         val entry = zip4jInput.nextEntry
         assertNotNull(entry)
         assertEquals("legacy.txt", entry.fileName)
-        assertEquals(content, zip4jInput.readAllBytes().decodeToString())
+        assertEquals(content, zip4jInput.readBytes().decodeToString())
         assertNull(zip4jInput.nextEntry)
         zip4jInput.close()
     }
@@ -436,7 +436,7 @@ class Zip4jInvestigationTest {
         val readEntry = zip4jInput.nextEntry
         assertNotNull(readEntry)
         assertEquals("stored.txt", readEntry.fileName)
-        assertEquals(content, zip4jInput.readAllBytes().decodeToString())
+        assertEquals(content, zip4jInput.readBytes().decodeToString())
         assertNull(zip4jInput.nextEntry)
         zip4jInput.close()
     }

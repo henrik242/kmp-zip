@@ -10,6 +10,7 @@ repositories {
 }
 
 kotlin {
+    jvmToolchain(8)
     jvm()
     iosArm64()
     iosSimulatorArm64()

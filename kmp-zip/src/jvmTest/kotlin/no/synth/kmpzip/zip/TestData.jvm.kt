@@ -2,7 +2,7 @@ package no.synth.kmpzip.zip
 
 actual object TestData {
     actual fun loadResource(name: String): ByteArray {
-        return TestData::class.java.getResourceAsStream("/testdata/$name")?.readAllBytes()
+        return TestData::class.java.getResourceAsStream("/testdata/$name")?.readBytes()
             ?: error("Resource not found: testdata/$name")
     }
 

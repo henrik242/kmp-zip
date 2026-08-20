@@ -109,6 +109,7 @@ val generateWasmJsTestData = tasks.register("generateWasmJsTestData") {
 }
 
 kotlin {
+    jvmToolchain(8)
     jvm()
     iosArm64()
     iosSimulatorArm64()
