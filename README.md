@@ -26,7 +26,7 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 - **mingwX64**
 - **wasmJs** (browser, Node 20+) — see [wasmJs notes](#wasmjs-notes) below
 
-The published JVM artifacts are compiled with `jvmTarget = 1.8` and `-Xjdk-release=1.8`, so they emit class version 52 and link only against Java 8 APIs, and the published Gradle metadata declares `org.gradle.jvm.version = 8`. CI checks the class version of every published jar and runs the JVM test suites on a real JDK 8.
+The published JVM artifacts are compiled with `jvmTarget = 1.8` and `-Xjdk-release=1.8`, so they emit class version 52 and link only against Java 8 APIs, and the published Gradle metadata declares `org.gradle.jvm.version = 8`. CI checks the class version of every published jar, runs the JVM test suites on a real JDK 8, and resolves the published artifact from a Java 8 consumer build.
 
 ## wasmJs notes
 
@@ -577,6 +577,7 @@ To run the JVM tests on a real JDK 8 (it must already be installed):
 ```sh
 ./gradlew jvmTest -Ptest.jvm=8
 ./gradlew publishToMavenLocal && scripts/check-java8-artifacts.sh
+./gradlew -p scripts/java8-consumer run -PkmpzipVersion=0.14.0
 ```
 
 ## Publishing

@@ -124,6 +124,16 @@ jobs:
         run: >-
           ./gradlew -Ptest.jvm=8
           :kmp-zip:jvmTest :kmp-zip-okio:jvmTest :kmp-zip-kotlinx:jvmTest
+      - name: Publish kmp-zip to Maven Local
+        shell: bash
+        run: >-
+          ./gradlew :kmp-zip:publishJvmPublicationToMavenLocal
+          :kmp-zip:publishKotlinMultiplatformPublicationToMavenLocal
+      - name: Java 8 consumer smoke test
+        shell: bash
+        run: |
+          version=$(./gradlew -q :kmp-zip:properties --property version | awk '/^version:/ {print $2}')
+          ./gradlew -p scripts/java8-consumer run -PkmpzipVersion="$version"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
