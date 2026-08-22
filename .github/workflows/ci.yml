@@ -33,7 +33,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
       - uses: actions/cache@v6
         with:
           path: ~/.konan
@@ -113,7 +113,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
       - uses: actions/cache@v6
         with:
           path: ~/.konan
