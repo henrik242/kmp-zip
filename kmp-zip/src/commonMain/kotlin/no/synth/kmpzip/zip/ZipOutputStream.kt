@@ -18,6 +18,11 @@ enum class ZipEncryption {
     LEGACY,
 }
 
+// An unset timestamp must not reach the archive: 0xFFFF/0xFFFF is not a valid DOS
+// date, and java.util.zip reads it back as the year 2108.
+private val ZipEntry.dosTime: Long
+    get() = if (time == -1L) ZipConstants.DOS_EPOCH else time
+
 /**
  * Writes ZIP entries to an output stream, with optional encryption.
  *
@@ -27,11 +32,6 @@ enum class ZipEncryption {
  * @param aesStrength AES key strength (default: AES-256, only applies when encryption is AES)
  * @param aesVersion AES version: 1 (AE-1, writes CRC) or 2 (AE-2, CRC=0)
  */
-// An unset timestamp must not reach the archive: 0xFFFF/0xFFFF is not a valid DOS
-// date, and readers decode it as the year 2107 or later.
-private val ZipEntry.dosTime: Long
-    get() = if (time == -1L) ZipConstants.DOS_EPOCH else time
-
 class ZipOutputStream @JvmOverloads constructor(
     private val output: OutputStream,
     private val password: ByteArray? = null,
