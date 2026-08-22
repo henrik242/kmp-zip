@@ -19,12 +19,14 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 
 ## Targets
 
-- **JVM** (also consumable from Android projects)
+- **JVM** (Java 8 baseline, class version 52; also consumable from Android projects)
 - **iosArm64**, **iosSimulatorArm64**
 - **macosArm64**, **macosX64**
 - **linuxX64**, **linuxArm64**
 - **mingwX64**
 - **wasmJs** (browser, Node 20+) — see [wasmJs notes](#wasmjs-notes) below
+
+The published JVM artifacts are compiled with `jvmTarget = 1.8` and `-Xjdk-release=1.8`, so they emit class version 52 and link only against Java 8 APIs, and the published Gradle metadata declares `org.gradle.jvm.version = 8`.
 
 ## wasmJs notes
 
@@ -79,13 +81,13 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:0.13.0")
+                implementation("no.synth:kmp-zip:0.14.0")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:0.13.0")
+                implementation("no.synth:kmp-zip-kotlinx:0.14.0")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:0.13.0")
+                implementation("no.synth:kmp-zip-okio:0.14.0")
             }
         }
     }
@@ -562,7 +564,7 @@ kmpzip gunzip largefile.txt.gz
 
 ## Building
 
-Requires JDK 21 and Xcode (for iOS targets).
+Requires JDK 21 and Xcode (for iOS targets). The Java 8 baseline comes from compiler flags rather than a toolchain pin, so no JDK 8 install is needed.
 
 ```sh
 ./gradlew build                      # Full build
@@ -575,8 +577,8 @@ Requires JDK 21 and Xcode (for iOS targets).
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v0.13.0
-git push origin v0.13.0
+git tag v0.14.0
+git push origin v0.14.0
 ```
 
 ## License
