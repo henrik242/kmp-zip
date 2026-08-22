@@ -8,8 +8,11 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 for m in kmp-zip kmp-zip-okio kmp-zip-kotlinx; do
-  # *[0-9].jar is the plain artifact, skipping -sources.jar and -javadoc.jar.
-  unzip -qo "$m"/build/libs/*-jvm-*[0-9].jar '*.class' -d "$tmp/$m"
+  # *[0-9].jar is the plain artifact, skipping -sources.jar and -javadoc.jar. A stale
+  # jar from an earlier version would make unzip treat the second match as a filter.
+  set -- "$m"/build/libs/*-jvm-*[0-9].jar
+  [ $# -eq 1 ] || { echo "FAIL: expected one $m jvm jar, found $#: $*" >&2; exit 1; }
+  unzip -qo "$1" '*.class' -d "$tmp/$m"
   grep -q '"org.gradle.jvm.version": 8' "$m/build/publications/jvm/module.json" \
     || { echo "FAIL: $m metadata does not declare org.gradle.jvm.version 8" >&2; exit 1; }
 done
