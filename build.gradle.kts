@@ -8,6 +8,8 @@ plugins {
     alias(libs.plugins.maven.publish) apply false
 }
 
+val testJvm: String? = providers.gradleProperty("test.jvm").orNull
+
 allprojects {
     group = "no.synth"
     version = "0.14.0"
@@ -27,6 +29,13 @@ allprojects {
                     // holds jvmTest, and every jvm classpath, to Java 8.
                     attributes { attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 8) }
                 }
+            }
+
+            if (testJvm != null) {
+                val launcher = extensions.getByType<JavaToolchainService>().launcherFor {
+                    languageVersion.set(JavaLanguageVersion.of(testJvm))
+                }
+                tasks.withType<Test>().configureEach { javaLauncher.set(launcher) }
             }
         }
     }

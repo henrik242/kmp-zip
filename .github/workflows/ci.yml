@@ -46,6 +46,10 @@ jobs:
         if: matrix.primary
         shell: bash
         run: ./gradlew build publishToMavenLocal
+      - name: Check Java 8 artifacts
+        if: matrix.primary
+        shell: bash
+        run: scripts/check-java8-artifacts.sh
       - name: Link release CLI binaries
         shell: bash
         run: ./gradlew ${{ matrix.cli-link-tasks }}
@@ -94,3 +98,34 @@ jobs:
         with:
           name: maven-artifacts
           path: ~/.m2/repository/no/synth/
+
+  # JDK 8 is installed first so JAVA_HOME stays on 21, and setup-gradle must run
+  # after both: it is what registers the installed JDKs as Gradle toolchains.
+  java8-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 8
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v5
+      - uses: actions/cache@v6
+        with:
+          path: ~/.konan
+          key: konan-metadata-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: konan-metadata-${{ runner.os }}-
+      - name: Run JVM tests on JDK 8
+        shell: bash
+        run: >-
+          ./gradlew -Ptest.jvm=8
+          :kmp-zip:jvmTest :kmp-zip-okio:jvmTest :kmp-zip-kotlinx:jvmTest
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: test-reports-java8
+          path: "**/build/reports/tests/"
