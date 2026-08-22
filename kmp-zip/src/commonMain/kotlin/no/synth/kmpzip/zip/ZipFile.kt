@@ -1,5 +1,6 @@
 package no.synth.kmpzip.zip
 
+import kotlin.jvm.JvmOverloads
 import no.synth.kmpzip.crypto.AesExtraField
 import no.synth.kmpzip.io.ByteArraySeekableSource
 import no.synth.kmpzip.io.Closeable
@@ -41,7 +42,7 @@ import no.synth.kmpzip.io.SeekableSourceInputStream
  * @param source the archive bytes, accessed by absolute position
  * @param password optional password for decrypting encrypted entries (as UTF-8 bytes)
  */
-class ZipFile(
+class ZipFile @JvmOverloads constructor(
     private val source: SeekableSource,
     private val password: ByteArray? = null,
 ) : Closeable {
@@ -247,6 +248,7 @@ class ZipFile(
 }
 
 /** Convenience constructor for reading a ZIP from a byte array. */
+@JvmOverloads
 fun ZipFile(data: ByteArray, password: ByteArray? = null): ZipFile =
     ZipFile(ByteArraySeekableSource(data), password)
 

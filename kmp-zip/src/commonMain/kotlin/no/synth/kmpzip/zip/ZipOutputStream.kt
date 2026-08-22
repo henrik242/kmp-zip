@@ -1,5 +1,6 @@
 package no.synth.kmpzip.zip
 
+import kotlin.jvm.JvmOverloads
 import no.synth.kmpzip.crypto.AesExtraField
 import no.synth.kmpzip.crypto.AesStrength
 import no.synth.kmpzip.crypto.WinZipAesCipher
@@ -26,7 +27,7 @@ enum class ZipEncryption {
  * @param aesStrength AES key strength (default: AES-256, only applies when encryption is AES)
  * @param aesVersion AES version: 1 (AE-1, writes CRC) or 2 (AE-2, CRC=0)
  */
-class ZipOutputStream(
+class ZipOutputStream @JvmOverloads constructor(
     private val output: OutputStream,
     private val password: ByteArray? = null,
     private val encryption: ZipEncryption = ZipEncryption.AES,
@@ -539,6 +540,7 @@ class ZipOutputStream(
 }
 
 /** Convenience constructor with string password (AES encryption). */
+@JvmOverloads
 fun ZipOutputStream(output: OutputStream, password: String, aesStrength: AesStrength = AesStrength.AES_256): ZipOutputStream {
     return ZipOutputStream(output, password.encodeToByteArray(), aesStrength = aesStrength)
 }

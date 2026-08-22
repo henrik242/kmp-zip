@@ -1,5 +1,6 @@
 package no.synth.kmpzip.zip
 
+import kotlin.jvm.JvmOverloads
 import no.synth.kmpzip.crypto.AesExtraField
 import no.synth.kmpzip.crypto.AesStrength
 import no.synth.kmpzip.crypto.Crc32
@@ -29,7 +30,7 @@ import no.synth.kmpzip.io.InputStream
  * @param input the underlying input stream
  * @param password optional password for decrypting encrypted entries (as UTF-8 bytes)
  */
-class ZipInputStream(
+class ZipInputStream @JvmOverloads constructor(
     private val input: InputStream,
     private val password: ByteArray? = null,
 ) : InputStream() {
@@ -794,6 +795,7 @@ class ZipInputStream(
 }
 
 /** Convenience constructor for reading a ZIP from a byte array. */
+@JvmOverloads
 fun ZipInputStream(data: ByteArray, password: ByteArray? = null): ZipInputStream {
     return ZipInputStream(no.synth.kmpzip.io.ByteArrayInputStream(data), password)
 }

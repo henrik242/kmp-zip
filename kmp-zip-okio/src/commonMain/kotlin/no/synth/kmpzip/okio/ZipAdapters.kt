@@ -1,5 +1,6 @@
 package no.synth.kmpzip.okio
 
+import kotlin.jvm.JvmOverloads
 import okio.BufferedSink
 import okio.BufferedSource
 import okio.FileHandle
@@ -20,6 +21,7 @@ fun ZipOutputStream(sink: BufferedSink): ZipOutputStream {
  * streaming the whole archive. Open the handle with `FileSystem.openReadOnly(path)`;
  * closing the returned [ZipFile] closes the handle.
  */
+@JvmOverloads
 fun ZipFile(handle: FileHandle, password: ByteArray? = null): ZipFile =
     ZipFile(handle.asSeekableSource(), password)
 
