@@ -7,6 +7,22 @@ import kotlin.test.assertContentEquals
 
 class ZipOutputStreamJvmTest {
 
+    @Test
+    fun javaUtilZipReadsAPlausibleTimestamp() {
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            zos.putNextEntry(ZipEntry("a.txt"))
+            zos.write("hi".encodeToByteArray())
+        }
+        val jis = java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(baos.toByteArray()))
+        val entry = jis.nextEntry
+        jis.close()
+        // An unset timestamp used to emit 0xFFFF/0xFFFF, which java.util.zip read as 2108.
+        val year = java.time.Instant.ofEpochMilli(entry.time)
+            .atZone(java.time.ZoneId.systemDefault()).year
+        assertEquals(1980, year)
+    }
+
     private data class EntryData(val name: String, val content: ByteArray, val method: Int, val isDirectory: Boolean)
 
     private fun readWithJava(data: ByteArray): List<EntryData> {

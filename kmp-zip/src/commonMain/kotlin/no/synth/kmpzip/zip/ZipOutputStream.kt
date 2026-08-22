@@ -27,6 +27,11 @@ enum class ZipEncryption {
  * @param aesStrength AES key strength (default: AES-256, only applies when encryption is AES)
  * @param aesVersion AES version: 1 (AE-1, writes CRC) or 2 (AE-2, CRC=0)
  */
+// An unset timestamp must not reach the archive: 0xFFFF/0xFFFF is not a valid DOS
+// date, and readers decode it as the year 2107 or later.
+private val ZipEntry.dosTime: Long
+    get() = if (time == -1L) ZipConstants.DOS_EPOCH else time
+
 class ZipOutputStream @JvmOverloads constructor(
     private val output: OutputStream,
     private val password: ByteArray? = null,
@@ -157,8 +162,8 @@ class ZipOutputStream @JvmOverloads constructor(
         writeLeShort(version) // version needed to extract
         writeLeShort(flag) // general purpose bit flag
         writeLeShort(method) // compression method
-        writeLeShort((entry.time and 0xFFFF).toInt()) // last mod file time
-        writeLeShort(((entry.time ushr 16) and 0xFFFF).toInt()) // last mod file date
+        writeLeShort((entry.dosTime and 0xFFFF).toInt()) // last mod file time
+        writeLeShort(((entry.dosTime ushr 16) and 0xFFFF).toInt()) // last mod file date
         if (flag and 0x08 != 0) {
             // Data descriptor follows, write zeros
             writeLeInt(0) // crc-32
@@ -462,8 +467,8 @@ class ZipOutputStream @JvmOverloads constructor(
         writeLeShort(info.versionNeeded) // version needed to extract
         writeLeShort(info.flag) // general purpose bit flag
         writeLeShort(info.headerMethod) // compression method
-        writeLeShort((entry.time and 0xFFFF).toInt()) // last mod file time
-        writeLeShort(((entry.time ushr 16) and 0xFFFF).toInt()) // last mod file date
+        writeLeShort((entry.dosTime and 0xFFFF).toInt()) // last mod file time
+        writeLeShort(((entry.dosTime ushr 16) and 0xFFFF).toInt()) // last mod file date
         writeLeInt(if (info.headerMethod == ZipConstants.AE_ENCRYPTED && aesVersion == 2) {
             0 // AE-2: CRC is 0 in central directory
         } else {

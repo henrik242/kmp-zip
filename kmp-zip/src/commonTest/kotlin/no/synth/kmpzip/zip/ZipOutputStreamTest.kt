@@ -249,6 +249,30 @@ class ZipOutputStreamTest {
     }
 
     // Simple CRC32 computation for test use (works cross-platform)
+    @Test
+    fun entryWithoutTimestampWritesTheDosEpoch() {
+        val zip = createZip { zos ->
+            zos.putNextEntry(ZipEntry("a.txt"))
+            zos.write("hi".encodeToByteArray())
+        }
+        // 0xFFFF/0xFFFF would be month 15, hour 31: readers decode it as year 2107+.
+        assertEquals(0x0000, (zip[10].toInt() and 0xFF) or ((zip[11].toInt() and 0xFF) shl 8))
+        assertEquals(0x0021, (zip[12].toInt() and 0xFF) or ((zip[13].toInt() and 0xFF) shl 8))
+
+        val entry = ZipFile(zip).use { it.entries.single() }
+        assertEquals(ZipConstants.DOS_EPOCH, entry.time)
+    }
+
+    @Test
+    fun explicitTimestampIsPreserved() {
+        val stamp = 0x5A2F_6000L
+        val zip = createZip { zos ->
+            zos.putNextEntry(ZipEntry("a.txt").apply { time = stamp })
+            zos.write("hi".encodeToByteArray())
+        }
+        assertEquals(stamp, ZipFile(zip).use { it.entries.single() }.time)
+    }
+
     private fun computeTestCrc(data: ByteArray): Long {
         // Use ZipOutputStream with DEFLATED to compute CRC indirectly,
         // or compute manually. For simplicity, use a lookup table.

@@ -11,6 +11,9 @@ object ZipConstants {
     internal const val CENTRAL_DIR_HEADER_SIGNATURE = 0x02014b50
     internal const val END_OF_CENTRAL_DIR_SIGNATURE = 0x06054b50
 
+    /** DOS date/time for 1980-01-01 00:00, the earliest a ZIP timestamp can express. */
+    internal const val DOS_EPOCH = 0x00210000L
+
     /** Minimum version needed to extract AES encrypted entries. */
     internal const val VERSION_AES = 51
     internal const val VERSION_DEFAULT = 20
