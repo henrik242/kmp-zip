@@ -47,16 +47,22 @@ fun registerTemplatedTestData(
     val templateFile = layout.projectDirectory.file(templatePath)
     val outputDir = layout.buildDirectory.dir("generated/$generatedDirName/kotlin")
     val outputFileName = templateFile.asFile.name.removeSuffix(".template")
+    // Resolved at configuration time: a doLast that reaches back for a script
+    // val or function captures the script object, which the configuration cache
+    // can't serialize. Gradle tracks the mapping.properties read as a
+    // configuration input, so editing it still invalidates the entry.
+    val resourceDirValue = resourceDirPath
+    val properties = renderActualProperties()
     inputs.file(templateFile)
     inputs.file(testDataMappingFile)
-    inputs.property("resourceDir", resourceDirPath)
+    inputs.property("resourceDir", resourceDirValue)
     outputs.dir(outputDir)
     doLast {
         val dir = outputDir.get().asFile.resolve("no/synth/kmpzip/zip")
         dir.mkdirs()
         val content = templateFile.asFile.readText()
-            .replace("@@RESOURCE_DIR@@", resourceDirPath)
-            .replace("@@PROPERTIES@@", renderActualProperties())
+            .replace("@@RESOURCE_DIR@@", resourceDirValue)
+            .replace("@@PROPERTIES@@", properties)
         dir.resolve(outputFileName).writeText(content)
     }
 }
@@ -80,6 +86,7 @@ val generateNativeNonAppleTestData = registerTemplatedTestData(
 val generateWebTestData = tasks.register("generateWebTestData") {
     val resDir = resourceDir
     val outputDir = layout.buildDirectory.dir("generated/webTestData/kotlin")
+    val properties = renderActualProperties()
     inputs.dir(resDir)
     outputs.dir(outputDir)
     doLast {
@@ -103,7 +110,7 @@ val generateWebTestData = tasks.register("generateWebTestData") {
         sb.append("    )\n\n")
         sb.append("    actual fun loadResource(name: String): ByteArray =\n")
         sb.append("        Base64.decode(RESOURCES[name] ?: error(\"Test resource not found: \$name\"))\n\n")
-        sb.append(renderActualProperties())
+        sb.append(properties)
         sb.append("\n}\n")
         dir.resolve("TestData.web.kt").writeText(sb.toString())
     }
