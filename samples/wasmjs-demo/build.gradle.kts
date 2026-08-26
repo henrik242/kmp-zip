@@ -11,7 +11,7 @@ repositories {
 
 // Embed every fixture under kmp-zip's testdata as a base64-decoded ByteArray
 // property on a generated `SampleFixtures` object. Mirrors the approach the
-// kmp-zip module uses for its own wasmJsTest — we reuse the same mapping.
+// kmp-zip module uses for its own webTest — we reuse the same mapping.
 val sharedTestdataDir = rootProject.layout.projectDirectory.dir("kmp-zip/src/commonTest/resources/testdata")
 val sharedTestdataMapping = sharedTestdataDir.file("mapping.properties")
 

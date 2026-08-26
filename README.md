@@ -1,12 +1,12 @@
 # kmp-zip
 
-Kotlin Multiplatform ZIP and GZIP library for JVM, iOS, macOS, Linux, Windows, and Kotlin/Wasm (wasmJs) targets, with encryption support.
+Kotlin Multiplatform ZIP and GZIP library for JVM, iOS, macOS, Linux, Windows, Kotlin/JS, and Kotlin/Wasm (wasmJs) targets, with encryption support.
 
 Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, and `GzipOutputStream` with a common API across platforms. Supports reading and writing encrypted ZIP archives:
 - **WinZip AES** (AES-128/192/256, AE-1 and AE-2 formats) — strong encryption, compatible with 7-Zip, WinRAR, etc.
 - **PKWare traditional** (ZipCrypto) — legacy encryption compatible with all ZIP tools including macOS `zip` and Windows Explorer
 
-All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on Apple targets, `platform.zlib` + a pure-Kotlin AES/HMAC/PBKDF2 fallback on Linux and Windows native targets, [pako](https://github.com/nodeca/pako) (MIT) + the same pure-Kotlin crypto on wasmJs.
+All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on Apple targets, `platform.zlib` + a pure-Kotlin AES/HMAC/PBKDF2 fallback on Linux and Windows native targets, [pako](https://github.com/nodeca/pako) (MIT) + the same pure-Kotlin crypto on js and wasmJs.
 
 ## Modules
 
@@ -24,13 +24,14 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 - **macosArm64**, **macosX64**
 - **linuxX64**, **linuxArm64**
 - **mingwX64**
-- **wasmJs** (browser, Node 20+) — see [wasmJs notes](#wasmjs-notes) below
+- **js** (browser, Node 20+) — see [JS notes](#js-and-wasmjs-notes) below
+- **wasmJs** (browser, Node 20+) — see [JS notes](#js-and-wasmjs-notes) below
 
 The published JVM artifacts are compiled with `jvmTarget = 1.8` and `-Xjdk-release=1.8`, so they emit class version 52 and link only against Java 8 APIs, and the published Gradle metadata declares `org.gradle.jvm.version = 8`. CI checks the class version of every published jar, runs the JVM test suites on a real JDK 8, and resolves the published artifact from a Java 8 consumer build.
 
-## wasmJs notes
+## JS and wasmJs notes
 
-The wasmJs target ships the same library API as every other target. There is no `kmp-zip-cli` for wasmJs and no filesystem helpers — work with `ByteArray` and the stream classes, and wire any file I/O on the host side.
+Both JS-hosted targets ship the same library API as every other target, and share one implementation — only the `ByteArray` <-> `Uint8Array` marshalling is written per target. There is no `kmp-zip-cli` for either, and no `zipTo`/`unzipFrom` filesystem helpers in the adapter modules — work with `ByteArray` and the stream classes, and wire any file I/O on the host side.
 
 A working browser sample lives in [`samples/wasmjs-demo`](samples/wasmjs-demo) — a single page that picks a `.gz` or `.zip` file from disk, runs it through `GzipInputStream` / `ZipInputStream` in the browser tab, and prompts for a password if the archive is encrypted. Run it with:
 
@@ -42,13 +43,14 @@ That builds the wasm bundle, starts a webpack dev server on `http://localhost:80
 
 ### Runtime caveats:
 
-- **pako runtime dependency.** Deflate/inflate is delegated to [pako 2.1.0](https://github.com/nodeca/pako), pinned exactly. Kotlin's wasmJs build picks it up automatically — the kmp-zip project's `kotlin-js-store/wasm/yarn.lock` records the tarball SHA-512 (`sha512-w+eufiZ1...`). Downstream consumers manage their own lockfile; commit yours and keep `--frozen-lockfile` on in CI. pako adds ~45 KB minified (~14 KB gzipped) to a wasmJs bundle and is not effectively tree-shakeable.
+- **pako runtime dependency.** Deflate/inflate is delegated to [pako 2.1.0](https://github.com/nodeca/pako), pinned exactly. Kotlin's js and wasmJs builds pick it up automatically — the kmp-zip project's `kotlin-js-store/yarn.lock` and `kotlin-js-store/wasm/yarn.lock` record the tarball SHA-512 (`sha512-w+eufiZ1...`). Downstream consumers manage their own lockfile; commit yours, and note that KGP fails the build on lockfile drift by default (`yarnLockMismatchReport`), refreshed with `kotlinUpgradeYarnLock`. pako adds ~45 KB minified (~14 KB gzipped) to a bundle and is not effectively tree-shakeable.
+- **`fileSeekableSource` is Node-only, and on `js` it breaks browser bundling.** It binds Node's `node:fs`, which a bundler resolves statically: on `js`, merely referencing `fileSeekableSource` from code reachable in a browser bundle fails the build with `Can't resolve 'node:fs'`. Keep it behind a Node-only entry point, or use `ByteArraySeekableSource` in the browser. Unreachable references are dropped cleanly on both targets.
 - **`Crypto.randomBytes` requires Web Crypto.** Calls `globalThis.crypto.getRandomValues`, which is available in any browser context (HTTPS *or* plain `http://`) and Node 20+. If the runtime doesn't expose Web Crypto — sandboxed JS realms, browsers with Web Crypto disabled by policy — the call throws `IllegalStateException` naming the likely cause.
-- **Long-running compression blocks the UI thread.** pako is synchronous; deflating a multi-MB archive on the main browser thread can stall rendering for hundreds of ms. For anything beyond small archives, run kmp-zip in a `DedicatedWorker`. Kotlin/Wasm has no `window`/`document` dependency, so a worker works without extra setup.
+- **Long-running compression blocks the UI thread.** pako is synchronous; deflating a multi-MB archive on the main browser thread can stall rendering for hundreds of ms. For anything beyond small archives, run kmp-zip in a `DedicatedWorker`. Neither target depends on `window`/`document`, so a worker works without extra setup.
 
 ## Threat model
 
-**Don't encrypt long-lived archives in a browser tab.** Use the JVM/Apple targets or do encryption server-side. The pure-Kotlin AES used on Linux, Windows, and wasmJs is table-based and leaks key bits via cache-timing on shared hardware. In a browser, same-origin attacker JS runs in the same renderer process; an in-process leak there recovers the AES key directly — strictly worse than the PBKDF2 brute-force baseline that protects an archive at rest. (PBKDF2 forces an attacker with only the encrypted bytes to brute-force the password; an in-process AES leak skips that step entirely.) JVM and Apple targets use platform AES (`javax.crypto` / `CommonCrypto`) and are not affected.
+**Don't encrypt long-lived archives in a browser tab.** Use the JVM/Apple targets or do encryption server-side. The pure-Kotlin AES used on Linux, Windows, js, and wasmJs is table-based and leaks key bits via cache-timing on shared hardware. In a browser, same-origin attacker JS runs in the same renderer process; an in-process leak there recovers the AES key directly — strictly worse than the PBKDF2 brute-force baseline that protects an archive at rest. (PBKDF2 forces an attacker with only the encrypted bytes to brute-force the password; an in-process AES leak skips that step entirely.) JVM and Apple targets use platform AES (`javax.crypto` / `CommonCrypto`) and are not affected.
 
 Decrypting attacker-supplied archives with a user-typed password in the browser is fine — the password is already there. PBKDF2 and HMAC-SHA1 are not table-based and have no known cache-timing leakage in the pure-Kotlin impl.
 
@@ -67,7 +69,7 @@ while (true) {
 }
 ```
 
-The `ZipEntry.size` field declares the uncompressed size up front and can be checked before reading; the running counter handles archives that lie about declared size. wasmJs is the most exposed target — browser-side ZIP reading of untrusted input is a liability and should be validated accordingly.
+The `ZipEntry.size` field declares the uncompressed size up front and can be checked before reading; the running counter handles archives that lie about declared size. js and wasmJs are the most exposed targets — browser-side ZIP reading of untrusted input is a liability and should be validated accordingly.
 
 ## Installation
 
@@ -75,7 +77,8 @@ Published on [Maven Central](https://central.sonatype.com/artifact/no.synth/kmp-
 
 ```kotlin
 kotlin {
-    // Add the targets you need, including wasmJs:
+    // Add the targets you need, including the JS-hosted ones:
+    // js { browser(); nodejs() }
     // wasmJs { browser(); nodejs() }
 
     sourceSets {
@@ -106,8 +109,8 @@ kotlin {
 | `ByteArrayOutputStream` | Auto-growing buffer with `toByteArray()`, `size()`, `reset()`, `writeTo()` |
 | `InputStream.readBytes()` | Extension that reads all remaining bytes |
 | `SeekableSource` | Random-access, read-only byte source — positional `read(position, into, off, len)` + `size`. Used by `ZipFile`. |
-| `ByteArraySeekableSource(ByteArray)` | In-memory `SeekableSource`; works on every target including browser wasmJs |
-| `fileSeekableSource(path)` | File-backed `SeekableSource` that reads lazily by position. JVM/Apple/Linux/Windows native and wasmJs-on-Node (not browser). Windows native is capped at 2 GB (32-bit file offsets). |
+| `ByteArraySeekableSource(ByteArray)` | In-memory `SeekableSource`; works on every target including js/wasmJs in the browser |
+| `fileSeekableSource(path)` | File-backed `SeekableSource` that reads lazily by position. JVM/Apple/Linux/Windows native and js/wasmJs on Node (not browser). Windows native is capped at 2 GB (32-bit file offsets). |
 
 ### `kmp-zip` — `no.synth.kmpzip.zip`
 
@@ -213,7 +216,7 @@ ZipFile(fileSeekableSource("/path/to/backup.zip"), password = "secret").use { zi
 }
 ```
 
-In a browser (wasmJs) there is no synchronous random file access — back `ZipFile`
+In a browser (js or wasmJs) there is no synchronous random file access — back `ZipFile`
 with `ByteArraySeekableSource(bytes)` (or just `ZipFile(bytes)`) instead.
 
 ### Create a ZIP into a ByteArray
@@ -490,7 +493,7 @@ suspend fun example() {
 
 Both helpers walk directories recursively, follow symlinks, do not preserve Unix mode bits, and reject extracted entry names that would escape `target` (absolute paths, drive letters, parent traversal, control chars).
 
-The helpers are not provided for the `wasmJs` target — browser wasm has no filesystem, and Node's wasm filesystem support is not exposed by these adapter modules. Use the streaming `ByteArray` API there.
+The helpers are not provided for the `js` and `wasmJs` targets — a browser has no filesystem, and Node's filesystem is not exposed by these adapter modules. Use the streaming `ByteArray` API there.
 
 ## CLI
 

@@ -18,6 +18,15 @@ kotlin {
     linuxX64()
     linuxArm64()
     mingwX64()
+    // js and wasmJs both register browser and Node so consumers see explicit
+    // support for each, but the browser test tasks are disabled: running them
+    // would try to download a headless Chromium onto CI runners.
+    js {
+        browser {
+            testTask { enabled = false }
+        }
+        nodejs()
+    }
     @OptIn(ExperimentalWasmDsl::class)
     wasmJs {
         browser {
@@ -45,8 +54,9 @@ kotlin {
             }
         }
         // Tests that need a separate thread to fire timers while a busy body runs
-        // (e.g. `withTimeout` cancelling an in-flight zip). wasmJs is single-threaded
-        // — the timer can't fire until the body suspends — so it's excluded here.
+        // (e.g. `withTimeout` cancelling an in-flight zip). js and wasmJs are
+        // single-threaded — the timer can't fire until the body suspends — so
+        // they're excluded here.
         val multiThreadedTest = create("multiThreadedTest") { dependsOn(commonTest.get()) }
         jvmTest { dependsOn(multiThreadedTest) }
         nativeTest { dependsOn(multiThreadedTest) }

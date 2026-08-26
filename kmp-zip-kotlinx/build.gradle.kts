@@ -18,6 +18,15 @@ kotlin {
     linuxX64()
     linuxArm64()
     mingwX64()
+    // js and wasmJs both register browser and Node so consumers see explicit
+    // support for each, but the browser test tasks are disabled: running them
+    // would try to download a headless Chromium onto CI runners.
+    js {
+        browser {
+            testTask { enabled = false }
+        }
+        nodejs()
+    }
     @OptIn(ExperimentalWasmDsl::class)
     wasmJs {
         browser {

@@ -1,6 +1,9 @@
 package no.synth.kmpzip.zip
 
+import no.synth.kmpzip.io.readBytes
+
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertNotNull
@@ -8,6 +11,27 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ZipInputStreamTest {
+
+    @Test
+    fun readsDeflatedEntryIntoNonZeroBufferOffset() {
+        val expected = ZipInputStream(TestData.deflatedZip).use { zis ->
+            assertNotNull(zis.nextEntry)
+            zis.readBytes()
+        }
+        val out = ByteArray(expected.size + 9) { 0x2A }
+        var total = 0
+        ZipInputStream(TestData.deflatedZip).use { zis ->
+            assertNotNull(zis.nextEntry)
+            while (true) {
+                val n = zis.read(out, 9 + total, minOf(64, out.size - 9 - total))
+                if (n == -1) break
+                total += n
+            }
+        }
+        assertEquals(expected.size, total)
+        assertContentEquals(expected, out.copyOfRange(9, out.size))
+        for (i in 0 until 9) assertEquals(0x2A, out[i], "clobbered out[$i] before the offset")
+    }
 
     private fun readEntryContent(zis: ZipInputStream): String {
         val buf = ByteArray(4096)

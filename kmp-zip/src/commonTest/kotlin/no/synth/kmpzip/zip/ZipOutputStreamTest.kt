@@ -273,6 +273,18 @@ class ZipOutputStreamTest {
         assertEquals(stamp, ZipFile(zip).use { it.entries.single() }.time)
     }
 
+    @Test
+    fun deflatesFromNonZeroWriteOffset() {
+        val payload = ByteArray(5000) { (it * 13 % 251).toByte() }
+        val padded = ByteArray(17) { 0x7F } + payload
+        val zip = createZip { zos ->
+            zos.putNextEntry(ZipEntry("offset.bin"))
+            zos.write(padded, 17, payload.size)
+            zos.closeEntry()
+        }
+        assertContentEquals(payload, readEntries(zip).single().second)
+    }
+
     private fun computeTestCrc(data: ByteArray): Long {
         // Use ZipOutputStream with DEFLATED to compute CRC indirectly,
         // or compute manually. For simplicity, use a lookup table.

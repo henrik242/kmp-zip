@@ -1,5 +1,6 @@
 import java.util.Base64
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+import org.jetbrains.kotlin.gradle.dsl.JsModuleKind
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -12,7 +13,7 @@ repositories {
 
 // Generate platform-specific TestData files from templates. The TestData property
 // → fixture-filename mapping lives in commonTest/resources/testdata/mapping.properties
-// so all three generators (apple/nativeNonApple/wasmJs) read the same source.
+// so all three generators (apple/nativeNonApple/web) read the same source.
 //
 // resourceDirPath: backslashes on Windows are normalized to forward slashes —
 // both because Kotlin string literals would interpret `\U`/`\t` as escape codes
@@ -72,13 +73,13 @@ val generateNativeNonAppleTestData = registerTemplatedTestData(
     generatedDirName = "nativeNonAppleTestData",
 )
 
-// wasmJs has no filesystem at test time, so the apple/nativeNonApple "fopen the
-// path" trick doesn't work. Embed every fixture as base64 in a generated Kotlin
-// source file; the test code decodes on demand. ~92 KB of fixtures → ~125 KB of
-// source, only in the test klib.
-val generateWasmJsTestData = tasks.register("generateWasmJsTestData") {
+// The JS-hosted targets have no filesystem at test time, so the apple/nativeNonApple
+// "fopen the path" trick doesn't work. Embed every fixture as base64 in a generated
+// Kotlin source file; the test code decodes on demand. ~92 KB of fixtures → ~125 KB
+// of source, only in the test klib.
+val generateWebTestData = tasks.register("generateWebTestData") {
     val resDir = resourceDir
-    val outputDir = layout.buildDirectory.dir("generated/wasmJsTestData/kotlin")
+    val outputDir = layout.buildDirectory.dir("generated/webTestData/kotlin")
     inputs.dir(resDir)
     outputs.dir(outputDir)
     doLast {
@@ -104,7 +105,7 @@ val generateWasmJsTestData = tasks.register("generateWasmJsTestData") {
         sb.append("        Base64.decode(RESOURCES[name] ?: error(\"Test resource not found: \$name\"))\n\n")
         sb.append(renderActualProperties())
         sb.append("\n}\n")
-        dir.resolve("TestData.wasmJs.kt").writeText(sb.toString())
+        dir.resolve("TestData.web.kt").writeText(sb.toString())
     }
 }
 
@@ -121,11 +122,22 @@ kotlin {
         // BCryptGenRandom in SecureRandom.mingw.kt needs an explicit -lbcrypt.
         binaries.all { linkerOpts("-lbcrypt") }
     }
+    // js and wasmJs both register browser and Node so consumers see explicit
+    // support for each, but the browser test tasks are disabled: running them
+    // would try to download a headless Chromium onto CI runners.
+    js {
+        // CommonJS rather than the UMD default: UMD additionally requires
+        // @JsNonModule on the pako externals, and that annotation doesn't exist
+        // on wasmJs, so it can't live in the shared webMain source set. This is
+        // a build-time choice for this module only; consumers pick their own.
+        compilerOptions { moduleKind.set(JsModuleKind.MODULE_COMMONJS) }
+        browser {
+            testTask { enabled = false }
+        }
+        nodejs()
+    }
     @OptIn(ExperimentalWasmDsl::class)
     wasmJs {
-        // Both environments are registered so consumers see explicit browser/Node
-        // support, but the browser test task is disabled — running it would try
-        // to download a headless Chromium onto CI runners.
         browser {
             testTask { enabled = false }
         }
@@ -144,19 +156,35 @@ kotlin {
         // fragment so KGP merges them and skips the duplicate-klib warning.
         val commonNonJvmMain = create("commonNonJvmMain") { dependsOn(sourceSets["commonMain"]) }
         sourceSets["nativeMain"].dependsOn(commonNonJvmMain)
-        sourceSets["wasmJsMain"].apply {
-            dependsOn(commonNonJvmMain)
-            languageSettings.optIn("kotlin.js.ExperimentalWasmJsInterop")
-        }
-        sourceSets["wasmJsTest"].apply {
-            languageSettings.optIn("kotlin.js.ExperimentalWasmJsInterop")
-        }
 
         // Holds the AES / HMAC / PBKDF2 wrappers that delegate to the pure-Kotlin
         // crypto in commonMain. Shared by every target without a platform crypto
-        // library (linux/mingw native + wasmJs). Apple/JVM use platform impls.
+        // library (linux/mingw native + js/wasmJs). Apple/JVM use platform impls.
         val pureKotlinCryptoMain = create("pureKotlinCryptoMain") { dependsOn(sourceSets["commonMain"]) }
-        sourceSets["wasmJsMain"].dependsOn(pureKotlinCryptoMain)
+
+        // webMain/webTest are KGP's own js+wasmJs fragments (and kotlin-stdlib's
+        // name for the same pair), already wired by applyDefaultHierarchyTemplate.
+        // The pako bindings, the chunk-drain logic and the Node fs SeekableSource
+        // are identical on both, since Kotlin's unified JS interop (JsAny, js(),
+        // external classes) compiles one source for both. Only the ByteArray <->
+        // Uint8Array marshalling differs; see PakoMarshal.*.kt.
+        sourceSets["webMain"].apply {
+            dependsOn(commonNonJvmMain)
+            dependsOn(pureKotlinCryptoMain)
+            dependencies {
+                // pako 2.1.0 is the de-facto sync zlib in JS — feature-frozen, zero
+                // deps, matches our PlatformDeflater/PlatformInflater contract 1:1
+                // (raw/zlib/gzip wbits, Z_NO_FLUSH/Z_FINISH, synchronous push).
+                // Pinned to exact version; consumers should use a lockfile.
+                implementation(npm("pako", "2.1.0"))
+            }
+        }
+
+        // languageSettings don't inherit through dependsOn: KGP requires every
+        // dependent source set to repeat its dependency's opt-ins.
+        listOf("webMain", "webTest", "jsMain", "jsTest", "wasmJsMain", "wasmJsTest").forEach {
+            sourceSets[it].languageSettings.optIn("kotlin.js.ExperimentalWasmJsInterop")
+        }
 
         val nativeNonAppleMain = create("nativeNonAppleMain") {
             dependsOn(sourceSets["nativeMain"])
@@ -188,15 +216,6 @@ kotlin {
                 implementation(libs.zip4j)
             }
         }
-        getByName("wasmJsMain") {
-            dependencies {
-                // pako 2.1.0 is the de-facto sync zlib in JS — feature-frozen, zero deps,
-                // matches our PlatformDeflater/PlatformInflater contract 1:1 (raw/zlib/gzip
-                // wbits, Z_NO_FLUSH/Z_FINISH, synchronous push). Pinned to exact version;
-                // consumers should use a lockfile.
-                implementation(npm("pako", "2.1.0"))
-            }
-        }
         getByName("appleTest") {
             kotlin.srcDir(generateAppleTestData.map {
                 layout.buildDirectory.dir("generated/appleTestData/kotlin")
@@ -205,11 +224,9 @@ kotlin {
         nativeNonAppleTest.kotlin.srcDir(generateNativeNonAppleTestData.map {
             layout.buildDirectory.dir("generated/nativeNonAppleTestData/kotlin")
         })
-        getByName("wasmJsTest") {
-            kotlin.srcDir(generateWasmJsTestData.map {
-                layout.buildDirectory.dir("generated/wasmJsTestData/kotlin")
-            })
-        }
+        getByName("webTest").kotlin.srcDir(generateWebTestData.map {
+            layout.buildDirectory.dir("generated/webTestData/kotlin")
+        })
     }
 }
 
@@ -221,7 +238,7 @@ mavenPublishing {
 
     pom {
         name.set("kmp-zip")
-        description.set("Kotlin Multiplatform ZIP streams for JVM, iOS, macOS, Linux, Windows, and Wasm/JS")
+        description.set("Kotlin Multiplatform ZIP streams for JVM, iOS, macOS, Linux, Windows, JS, and Wasm/JS")
         url.set("https://github.com/henrik242/kmp-zip")
         licenses {
             license {
