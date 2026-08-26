@@ -12,7 +12,7 @@ val testJvm: String? = providers.gradleProperty("test.jvm").orNull
 
 allprojects {
     group = "no.synth"
-    version = "0.14.0"
+    version = "0.15.0"
 
     plugins.withId("org.jetbrains.kotlin.multiplatform") {
         // Published modules only. kmp-zip-cli ships as native binaries, and its JVM jar
