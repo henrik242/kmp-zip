@@ -96,14 +96,18 @@ private fun nowMs(): Double = js("performance.now()")
 // a sample — a real app would render a proper input field instead.
 private fun jsPrompt(message: String): String? = js("prompt(message)")
 
+// Promise chain rather than async/await: Kotlin/JS parses the js() body and
+// rejects async functions, while Kotlin/Wasm passes the string straight through.
+// .then() is equivalent and compiles on both.
 private fun onFilePicked(elementId: String, handler: (String, Uint8Array) -> Unit) {
     js(
         """
-        document.getElementById(elementId).addEventListener('change', async (ev) => {
+        document.getElementById(elementId).addEventListener('change', (ev) => {
             const file = ev.target.files && ev.target.files[0];
             if (!file) return;
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            handler(file.name, bytes);
+            file.arrayBuffer().then((buf) => {
+                handler(file.name, new Uint8Array(buf));
+            });
         })
         """
     )

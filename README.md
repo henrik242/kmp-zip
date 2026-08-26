@@ -33,13 +33,14 @@ The published JVM artifacts are compiled with `jvmTarget = 1.8` and `-Xjdk-relea
 
 Both JS-hosted targets ship the same library API as every other target, and share one implementation — only the `ByteArray` <-> `Uint8Array` marshalling is written per target. There is no `kmp-zip-cli` for either, and no `zipTo`/`unzipFrom` filesystem helpers in the adapter modules — work with `ByteArray` and the stream classes, and wire any file I/O on the host side.
 
-A working browser sample lives in [`samples/wasmjs-demo`](samples/wasmjs-demo) — a single page that picks a `.gz` or `.zip` file from disk, runs it through `GzipInputStream` / `ZipInputStream` in the browser tab, and prompts for a password if the archive is encrypted. Run it with:
+A working browser sample lives in [`samples/browser-demo`](samples/browser-demo) — a single page that picks a `.gz` or `.zip` file from disk, runs it through `GzipInputStream` / `ZipInputStream` in the browser tab, and prompts for a password if the archive is encrypted. It builds from one source set for both targets, so pick either:
 
 ```sh
-./gradlew :samples:wasmjs-demo:wasmJsBrowserDevelopmentRun
+./gradlew :samples:browser-demo:jsBrowserDevelopmentRun
+./gradlew :samples:browser-demo:wasmJsBrowserDevelopmentRun
 ```
 
-That builds the wasm bundle, starts a webpack dev server on `http://localhost:8080`, and opens it. The sample also ships a `wasmJsNodeTest` harness that runs every archive in `kmp-zip/src/commonTest/resources/testdata/` through the sample's pipeline — see [`samples/wasmjs-demo/README.md`](samples/wasmjs-demo/README.md).
+That builds the bundle, starts a webpack dev server on `http://localhost:8080`, and opens it. The sample also ships `jsNodeTest` / `wasmJsNodeTest` harnesses that run every archive in `kmp-zip/src/commonTest/resources/testdata/` through the sample's pipeline — see [`samples/browser-demo/README.md`](samples/browser-demo/README.md).
 
 ### Runtime caveats:
 
