@@ -38,6 +38,12 @@ kotlin {
     applyDefaultHierarchyTemplate()
 
     sourceSets {
+        // The default-dispatcher actual is identical on native and on js/wasmJs;
+        // only jvm differs. Named to match kmp-zip's own commonNonJvmMain.
+        val commonNonJvmMain = create("commonNonJvmMain") { dependsOn(commonMain.get()) }
+        sourceSets["nativeMain"].dependsOn(commonNonJvmMain)
+        sourceSets["webMain"].dependsOn(commonNonJvmMain)
+
         commonMain {
             dependencies {
                 api(project(":kmp-zip"))
