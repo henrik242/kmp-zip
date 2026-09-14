@@ -6,6 +6,10 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 
 ## [Unreleased]
 
+n/a
+
+## [1.0.0] - 2026-09-14
+
 ### Added
 - Typed read exceptions, all extending a new multiplatform `no.synth.kmpzip.io.IOException`
   (a typealias to `java.io.IOException` on the JVM): `ZipException` base with
