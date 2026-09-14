@@ -98,10 +98,16 @@ class ZipOutputStream @JvmOverloads constructor(
     }
 
     fun putNextEntry(entry: ZipEntry) {
-        if (closed) throw Exception("Stream closed")
+        if (closed) throw IllegalStateException("Stream closed")
         if (currentEntry != null) closeEntry()
 
         val method = if (entry.method == -1) defaultMethod else entry.method
+        // ZipEntry.method is public and can be set directly, bypassing setMethod. Validate
+        // here, before the encryption branches, so an unsupported method fails loudly
+        // instead of matching no write() branch and silently emitting an empty entry.
+        require(method == ZipConstants.STORED || method == ZipConstants.DEFLATED) {
+            "Unsupported compression method: $method"
+        }
         entry.method = method
 
         entryOffset = bytesWritten
@@ -138,7 +144,7 @@ class ZipOutputStream @JvmOverloads constructor(
             val flag = when (method) {
                 ZipConstants.STORED -> {
                     if (entry.size == -1L || entry.crc == -1L) {
-                        throw Exception("STORED entry requires size and crc to be set")
+                        throw IllegalArgumentException("STORED entry requires size and crc to be set")
                     }
                     0
                 }
@@ -146,7 +152,7 @@ class ZipOutputStream @JvmOverloads constructor(
                     deflater = PlatformDeflater().also { it.init(level) }
                     0x08 // data descriptor flag
                 }
-                else -> throw Exception("Unsupported compression method: $method")
+                else -> throw IllegalArgumentException("Unsupported compression method: $method")
             }
 
             writeLocalFileHeader(entry, method, flag, ZipConstants.VERSION_DEFAULT)
@@ -189,8 +195,8 @@ class ZipOutputStream @JvmOverloads constructor(
     }
 
     override fun write(b: ByteArray, off: Int, len: Int) {
-        if (closed) throw Exception("Stream closed")
-        val entry = currentEntry ?: throw Exception("No current entry")
+        if (closed) throw IllegalStateException("Stream closed")
+        val entry = currentEntry ?: throw IllegalStateException("No current entry")
         if (len == 0) return
 
         entryCrc.update(b, off, len)
@@ -448,7 +454,7 @@ class ZipOutputStream @JvmOverloads constructor(
 
     fun finish() {
         if (finished) return
-        if (closed) throw Exception("Stream closed")
+        if (closed) throw IllegalStateException("Stream closed")
         if (currentEntry != null) closeEntry()
         finished = true
 

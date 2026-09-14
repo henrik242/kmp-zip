@@ -2,6 +2,7 @@ package no.synth.kmpzip.gzip
 
 import no.synth.kmpzip.io.InputStream
 import no.synth.kmpzip.io.NoProgressException
+import no.synth.kmpzip.zip.CodecException
 import no.synth.kmpzip.zip.PlatformInflater
 
 actual class GzipInputStream actual constructor(private val input: InputStream) : InputStream() {
@@ -39,7 +40,7 @@ actual class GzipInputStream actual constructor(private val input: InputStream) 
             (inputBuf[0].toInt() and 0xFF) != 0x1F ||
             (inputBuf[1].toInt() and 0xFF) != 0x8B
         ) {
-            throw Exception("Not in gzip format")
+            throw GzipFormatException("Not in gzip format")
         }
         inputBufLen = got
     }
@@ -60,7 +61,14 @@ actual class GzipInputStream actual constructor(private val input: InputStream) 
             // pako wrapper accumulates output internally and needs subsequent
             // calls to drain it). On native/zlib this is a cheap no-op.
             val available = inputBufLen - inputBufPos
-            val result = inflater.inflate(inputBuf, inputBufPos, available, b, off, len)
+            // A bad deflate stream or a failed gzip CRC/ISIZE trailer check surfaces from the
+            // codec as a CodecException; type it as GzipFormatException. Programmer errors
+            // (bad off/len, uninitialized inflater) are left to propagate, as on the JVM.
+            val result = try {
+                inflater.inflate(inputBuf, inputBufPos, available, b, off, len)
+            } catch (e: CodecException) {
+                throw GzipFormatException(e.message ?: "Corrupt gzip stream", e)
+            }
             inputBufPos += result.bytesConsumed
 
             if (result.streamEnd) {
@@ -98,7 +106,7 @@ actual class GzipInputStream actual constructor(private val input: InputStream) 
             // Produced nothing and not at stream end → need more input.
             val n = input.read(inputBuf, 0, inputBuf.size)
             if (n == -1) {
-                throw Exception("Truncated gzip stream: unexpected EOF before end of compressed data")
+                throw GzipFormatException("Truncated gzip stream: unexpected EOF before end of compressed data")
             }
             // Not EOF but no bytes either; without this the loop would spin.
             if (n == 0) {

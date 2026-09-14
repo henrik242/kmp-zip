@@ -24,7 +24,14 @@ internal actual class PlatformInflater actual constructor() {
             inf.setInput(input, inputOffset, inputLen)
         }
 
-        val produced = inf.inflate(output, outputOffset, outputLen)
+        val produced = try {
+            inf.inflate(output, outputOffset, outputLen)
+        } catch (e: java.util.zip.DataFormatException) {
+            // Bad compressed data. Map to the shared codec type so callers can tell a data
+            // fault from a programmer error (bad args, uninitialized), which propagate as-is.
+            // Keep the original as cause so the codec type and stack trace survive.
+            throw CodecException(e.message ?: "inflate failed: bad compressed data", e)
+        }
         val consumed = (inf.bytesRead - bytesReadBefore).toInt()
 
         return InflateResult(consumed, produced, inf.finished())

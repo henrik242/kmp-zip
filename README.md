@@ -109,6 +109,8 @@ kotlin {
 | `ByteArrayInputStream` | Reads from a `ByteArray`. Full Java-compatible API. |
 | `ByteArrayOutputStream` | Auto-growing buffer with `toByteArray()`, `size()`, `reset()`, `writeTo()` |
 | `InputStream.readBytes()` | Extension that reads all remaining bytes |
+| `IOException` | Base for all read-path exceptions. On the JVM it is `java.io.IOException` (typealias); in common code, catch `no.synth.kmpzip.io.IOException`. See [Error handling](#error-handling). |
+| `NoProgressException` | A source or codec that neither advances nor ends (would otherwise loop forever). Extends `IOException`. |
 | `SeekableSource` | Random-access, read-only byte source — positional `read(position, into, off, len)` + `size`. Used by `ZipFile`. |
 | `ByteArraySeekableSource(ByteArray)` | In-memory `SeekableSource`; works on every target including js/wasmJs in the browser |
 | `fileSeekableSource(path)` | File-backed `SeekableSource` that reads lazily by position. JVM/Apple/Linux/Windows native and js/wasmJs on Node (not browser). Windows native is capped at 2 GB (32-bit file offsets). |
@@ -127,6 +129,10 @@ kotlin {
 | `ZipConstants` | `STORED = 0`, `DEFLATED = 8` |
 | `ZipEncryption` | `AES` (default, strong), `LEGACY` (PKWare traditional, for compatibility) |
 | `AesStrength` | `AES_128`, `AES_192`, `AES_256` (default) |
+| `ZipException` | Base for archive failures; extends `IOException`. (Simple name collides with `java.util.zip.ZipException` on the JVM — alias one if you import both.) |
+| `ZipFormatException` | Malformed, corrupt, or truncated archive |
+| `ZipUnsupportedFeatureException` | Valid archive, unimplemented feature (ZIP64, split/spanned, unknown method) |
+| `ZipPasswordException` | Missing or wrong password (see [Error handling](#error-handling)) |
 
 ### `kmp-zip` — `no.synth.kmpzip.crypto`
 
@@ -145,6 +151,8 @@ kotlin {
 | `GzipInputStream(ByteArray)` | Convenience factory |
 | `GzipOutputStream(OutputStream)` | Compresses data in GZIP format — `write()`, `finish()`, `flush()`, `close()` |
 | `isGzip(ByteArray)` | Two-byte sniff: `true` if the data starts with the GZIP magic `0x1f 0x8b`. Not validation. |
+| `GzipException` | Base for GZIP stream failures; extends `IOException`. |
+| `GzipFormatException` | Not GZIP format, corrupt, or truncated. On the JVM, `java.util.zip` codec errors are mapped to this type too. |
 
 ### `kmp-zip-kotlinx` — `no.synth.kmpzip.kotlinx`
 
@@ -185,6 +193,40 @@ kotlin {
 | `GzipOutputStream(BufferedSink)` | Factory — creates a `GzipOutputStream` from a `BufferedSink` |
 | `FileSystem.zipTo(target, sources, ...)` | Suspend helper — recursively zips files/directories into `target` |
 | `FileSystem.unzipFrom(archive, target, ...)` | Suspend helper — extracts `archive` into `target`, rejecting unsafe entry names |
+
+## Error handling
+
+Read failures throw typed exceptions. All extend `no.synth.kmpzip.io.IOException`, which
+on the JVM is a typealias to `java.io.IOException`, so existing `catch (IOException)`
+handlers keep working there; in common code, import and catch `no.synth.kmpzip.io.IOException`.
+Each format also has a catchable base (`ZipException`, `GzipException`):
+
+```kotlin
+import no.synth.kmpzip.zip.ZipException
+import no.synth.kmpzip.zip.ZipFormatException
+import no.synth.kmpzip.zip.ZipPasswordException
+import no.synth.kmpzip.zip.ZipUnsupportedFeatureException
+// NB: ZipException collides by simple name with java.util.zip.ZipException on the JVM;
+// alias one import if you use both.
+
+try {
+    ZipInputStream(bytes, password).use { /* read entries */ }
+} catch (e: ZipPasswordException) {          // missing/wrong password
+} catch (e: ZipUnsupportedFeatureException) { // ZIP64, split/spanned
+} catch (e: ZipFormatException) {            // not a ZIP, corrupt, or truncated
+} catch (e: ZipException) {                  // any other archive-level failure
+}
+```
+
+New subtypes may appear in future versions, so always keep the base (`ZipException` /
+`GzipException`, or `IOException`) as a fallback branch. WinZip AES entries carry a MAC,
+so a wrong password is reported as `ZipPasswordException` and later corruption as
+`ZipFormatException`; legacy PKWare ZipCrypto has no MAC, so it cannot tell the two apart
+and its `ZipPasswordException` message says so.
+
+On the JVM, catching `java.io.IOException` unifies these with I/O errors from the
+underlying source (files, streams); on other targets, `no.synth.kmpzip.io.IOException`
+covers only kmp-zip's own exceptions, not errors thrown by a source you supply.
 
 ## Usage
 

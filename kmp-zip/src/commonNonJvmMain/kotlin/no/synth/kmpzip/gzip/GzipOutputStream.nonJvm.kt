@@ -15,7 +15,7 @@ actual class GzipOutputStream actual constructor(private val output: OutputStrea
     }
 
     actual override fun write(b: ByteArray, off: Int, len: Int) {
-        if (closed) throw Exception("Stream closed")
+        if (closed) throw IllegalStateException("Stream closed")
         if (len == 0) return
 
         var inputOffset = off

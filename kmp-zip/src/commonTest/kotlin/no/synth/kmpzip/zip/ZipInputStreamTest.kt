@@ -1,11 +1,13 @@
 package no.synth.kmpzip.zip
 
+import no.synth.kmpzip.io.ByteArrayOutputStream
 import no.synth.kmpzip.io.readBytes
 
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -409,14 +411,14 @@ class ZipInputStreamTest {
     @Test
     fun emptyByteArrayThrows() {
         val zis = ZipInputStream(byteArrayOf())
-        assertFails { zis.nextEntry }
+        assertFailsWith<ZipFormatException> { zis.nextEntry }
         zis.close()
     }
 
     @Test
     fun invalidDataThrows() {
         val zis = ZipInputStream(byteArrayOf(0x00, 0x01, 0x02))
-        assertFails { zis.nextEntry }
+        assertFailsWith<ZipFormatException> { zis.nextEntry }
         zis.close()
     }
 
@@ -424,7 +426,47 @@ class ZipInputStreamTest {
     fun truncatedHeaderThrows() {
         // Valid signature but truncated header — should throw, not silently return null
         val zis = ZipInputStream(byteArrayOf(0x50, 0x4B, 0x03, 0x04))
-        assertFails { zis.nextEntry }
+        assertFailsWith<ZipFormatException> { zis.nextEntry }
+        zis.close()
+    }
+
+    @Test
+    fun truncatedMidSignatureThrowsNotSilentEnd() {
+        // An archive cut partway through a header signature must be reported as truncated,
+        // not silently accepted as a clean end of archive after the entries read so far.
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out).use { zos ->
+            zos.putNextEntry(ZipEntry("a.txt"))
+            zos.write("hello".encodeToByteArray())
+            zos.closeEntry()
+        }
+        val bytes = out.toByteArray()
+        // No ZIP comment, so the EOCD is the last 22 bytes; its central-directory offset
+        // (LE u32 at +16) is where the reader looks for the next signature after the entry.
+        val eocd = bytes.size - 22
+        val cdOffset = (bytes[eocd + 16].toInt() and 0xFF) or
+            ((bytes[eocd + 17].toInt() and 0xFF) shl 8) or
+            ((bytes[eocd + 18].toInt() and 0xFF) shl 16) or
+            ((bytes[eocd + 19].toInt() and 0xFF) shl 24)
+        val truncated = bytes.copyOf(cdOffset + 2) // two bytes into the CD signature
+        assertFailsWith<ZipFormatException> {
+            ZipInputStream(truncated).use { zis ->
+                zis.nextEntry
+                zis.readBytes()
+                zis.nextEntry
+            }
+        }
+    }
+
+    @Test
+    fun unsupportedCompressionMethodThrows() {
+        // Patch the first local file header's compression method (offset 8) to an
+        // unsupported value (6 = imploded). Valid archive, feature we do not implement.
+        val bytes = TestData.multiEntryZip.copyOf()
+        bytes[8] = 6
+        bytes[9] = 0
+        val zis = ZipInputStream(bytes)
+        assertFailsWith<ZipUnsupportedFeatureException> { zis.nextEntry }
         zis.close()
     }
 }

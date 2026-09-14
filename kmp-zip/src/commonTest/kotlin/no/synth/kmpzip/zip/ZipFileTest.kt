@@ -5,6 +5,7 @@ import no.synth.kmpzip.io.readBytes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -79,13 +80,13 @@ class ZipFileTest {
     @Test
     fun missingEntryThrows() {
         ZipFile(TestData.multiEntryZip).use { zip ->
-            assertFails { zip.getInputStream("nope.txt") }
+            assertFailsWith<IllegalArgumentException> { zip.getInputStream("nope.txt") }
         }
     }
 
     @Test
     fun notAZipThrows() {
-        assertFails { ZipFile(ByteArray(100) { 0 }) }
+        assertFailsWith<ZipFormatException> { ZipFile(ByteArray(100) { 0 }) }
     }
 
     // The test archives carry no ZIP comment, so the EOCD is exactly the last 22 bytes.
@@ -93,13 +94,22 @@ class ZipFileTest {
     fun splitArchiveRejected() {
         val bytes = TestData.multiEntryZip.copyOf()
         bytes[bytes.size - 18] = 1 // EOCD "number of this disk" (offset +4) -> nonzero
-        assertFails { ZipFile(bytes) }
+        assertFailsWith<ZipUnsupportedFeatureException> { ZipFile(bytes) }
+    }
+
+    @Test
+    fun zip64Rejected() {
+        val bytes = TestData.multiEntryZip.copyOf()
+        // EOCD "total entries" (offset +10) == 0xFFFF signals ZIP64.
+        bytes[bytes.size - 12] = 0xFF.toByte()
+        bytes[bytes.size - 11] = 0xFF.toByte()
+        assertFailsWith<ZipUnsupportedFeatureException> { ZipFile(bytes) }
     }
 
     @Test
     fun truncatedCentralDirectoryRejected() {
         val bytes = TestData.multiEntryZip.copyOf()
         bytes[bytes.size - 12] = 9 // EOCD "total entries" (offset +10) -> declares more than present
-        assertFails { ZipFile(bytes) }
+        assertFailsWith<ZipFormatException> { ZipFile(bytes) }
     }
 }

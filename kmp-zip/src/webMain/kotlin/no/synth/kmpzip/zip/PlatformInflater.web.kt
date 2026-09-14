@@ -44,6 +44,12 @@ internal actual class PlatformInflater actual constructor() {
                 // Z_BUF_ERROR through this return value, but the native impl
                 // tolerates it and we keep parity in case pako's behaviour changes.
                 if (inf.err != Z_BUF_ERROR) {
+                    // Only bad-data statuses are corruption; other failures (e.g.
+                    // Z_STREAM_ERROR) are operational/internal and keep their own type
+                    // rather than being misreported as a corrupt archive.
+                    if (inf.err == Z_DATA_ERROR || inf.err == Z_NEED_DICT) {
+                        throw CodecException("pako inflate failed: err=${inf.err}, msg=${inf.msg}")
+                    }
                     throw IllegalStateException("pako inflate failed: err=${inf.err}, msg=${inf.msg}")
                 }
             }

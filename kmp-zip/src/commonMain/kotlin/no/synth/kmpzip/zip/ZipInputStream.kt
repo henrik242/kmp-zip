@@ -9,6 +9,16 @@ import no.synth.kmpzip.crypto.ZipCrypto
 import no.synth.kmpzip.io.InputStream
 import no.synth.kmpzip.io.NoProgressException
 
+// AesExtraField.parse delegates to AesStrength.fromExtraFieldValue, which throws
+// IllegalArgumentException for a strength byte outside 1..3. Remap it so malformed AES
+// metadata from an untrusted archive stays catchable as ZipException, not a programmer error.
+internal fun parseAesExtraFieldOrThrow(extra: ByteArray?): AesExtraField? =
+    try {
+        AesExtraField.parse(extra)
+    } catch (e: IllegalArgumentException) {
+        throw ZipFormatException("Malformed AES extra field", e)
+    }
+
 /**
  * Reads ZIP entries from an input stream, with optional decryption.
  *
@@ -75,6 +85,10 @@ class ZipInputStream @JvmOverloads constructor(
     private var entryCrc: Crc32? = null
     private var entryEncrypted: Boolean = false
 
+    // True once the current AES entry's HMAC auth code has verified. The key is then
+    // cryptographically proven, so a later CRC mismatch is corruption, not a bad password.
+    private var entryAesAuthenticated: Boolean = false
+
     // True when the current entry's CRC is not stored (AE-2 stores CRC=0 in the
     // local header and central directory; the AES auth code covers integrity).
     private var entrySkipCrc: Boolean = false
@@ -110,24 +124,27 @@ class ZipInputStream @JvmOverloads constructor(
 
     val nextEntry: ZipEntry?
         get() {
-            if (closed) throw Exception("Stream closed")
+            if (closed) throw IllegalStateException("Stream closed")
             closeEntry()
 
-            // Read the signature separately: EOF here is normal (no more entries).
-            // All other exceptions (password, corruption, etc.) should propagate.
-            val sig = try {
-                readLeInt()
-            } catch (_: Exception) {
-                if (!firstSignatureRead) throw Exception("Not a ZIP file: empty or truncated input")
+            // Probe one byte to tell a clean end of input (no more entries) from a
+            // truncated or failed read. A -1 at this boundary means the archive ended;
+            // once a byte is read we are committed to a full signature, so a short read
+            // while completing it is truncation (readByte throws), and a source I/O error
+            // propagates with its own type instead of being mistaken for end-of-archive.
+            val firstByte = readRawByte()
+            if (firstByte == -1) {
+                if (!firstSignatureRead) throw ZipFormatException("Not a ZIP file: empty or truncated input")
                 return null
             }
+            val sig = firstByte or (readByte() shl 8) or (readByte() shl 16) or (readByte() shl 24)
             if (!firstSignatureRead) {
                 firstSignatureRead = true
                 if (sig != ZipConstants.LOCAL_FILE_HEADER_SIGNATURE &&
                     sig != ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE &&
                     sig != ZipConstants.END_OF_CENTRAL_DIR_SIGNATURE
                 ) {
-                    throw Exception("Not a ZIP file: bad signature 0x${sig.toUInt().toString(16).padStart(8, '0')}")
+                    throw ZipFormatException("Not a ZIP file: bad signature 0x${sig.toUInt().toString(16).padStart(8, '0')}")
                 }
             }
             if (sig != ZipConstants.LOCAL_FILE_HEADER_SIGNATURE) return null
@@ -167,8 +184,8 @@ class ZipInputStream @JvmOverloads constructor(
         entrySkipCrc = false
 
         if (method == ZipConstants.AE_ENCRYPTED && isEncrypted) {
-            val aesField = AesExtraField.parse(extra)
-                ?: throw Exception("AES encrypted entry missing AES extra field")
+            val aesField = parseAesExtraFieldOrThrow(extra)
+                ?: throw ZipFormatException("AES encrypted entry missing AES extra field")
 
             if (password == null) throw ZipPasswordException("Password required for AES encrypted entry: $name")
 
@@ -243,6 +260,7 @@ class ZipInputStream @JvmOverloads constructor(
         entryReadStarted = false
         entryCrc = Crc32()
         entryEncrypted = isEncrypted
+        entryAesAuthenticated = false
 
         when (effectiveMethod) {
             ZipConstants.STORED -> {
@@ -270,7 +288,7 @@ class ZipInputStream @JvmOverloads constructor(
                 inflaterBufPos = 0
                 inflaterBufLen = 0
             }
-            else -> throw Exception("Unsupported compression method: $effectiveMethod")
+            else -> throw ZipUnsupportedFeatureException("Unsupported compression method: $effectiveMethod")
         }
 
         return entry
@@ -500,13 +518,18 @@ class ZipInputStream @JvmOverloads constructor(
         val inf = inflater ?: throw IllegalStateException("Inflater not initialized")
         return try {
             inf.inflate(input, inOff, inLen, output, outOff, outLen)
-        } catch (e: Exception) {
-            // Garbage input from a wrong-password decryption usually surfaces as
-            // a deflate error before the CRC check has a chance to run.
-            if (entryEncrypted) {
-                throw ZipPasswordException("Wrong password for entry: ${currentEntry?.name}")
+        } catch (e: CodecException) {
+            // The codec rejected the data. Programmer errors (bad off/len, inflater state) are
+            // not CodecException and propagate untouched. Garbage from a wrong-password
+            // decryption surfaces here as a codec error before the integrity check runs:
+            // legacy ZipCrypto has only a weak 1-byte header check, so a wrong password can
+            // slip through indistinguishable from corruption. AES verified the password up
+            // front via the 2-byte check value, so an AES deflate failure is corruption;
+            // unencrypted entries have no password either.
+            if (legacyCipher != null) {
+                throw ZipPasswordException("Wrong password or corrupt data for entry: ${currentEntry?.name}", e)
             }
-            throw e
+            throw ZipFormatException("Corrupt deflate stream for entry: ${currentEntry?.name}", e)
         }
     }
 
@@ -585,8 +608,9 @@ class ZipInputStream @JvmOverloads constructor(
                 val expectedAuthCode = readExact(WinZipAesCipher.AUTH_CODE_LENGTH)
                 val actualAuthCode = aes.getAuthCode()
                 if (!constantTimeEquals(actualAuthCode, expectedAuthCode)) {
-                    throw Exception("AES authentication failed — data may be corrupted")
+                    throw ZipFormatException("AES authentication failed - data may be corrupted")
                 }
+                entryAesAuthenticated = true
             } finally {
                 aesCipher = null
             }
@@ -608,10 +632,13 @@ class ZipInputStream @JvmOverloads constructor(
         val expected = currentEntry?.crc ?: return
         if (expected < 0) return
         if (computed.value() != expected) {
-            if (entryEncrypted) {
-                throw ZipPasswordException("Wrong password for entry: ${currentEntry?.name}")
+            // AES: the auth code already proved the key, so a CRC mismatch is corruption.
+            // Legacy ZipCrypto has no MAC, so a CRC failure cannot tell a wrong password
+            // from corrupt data; say so rather than blaming the password outright.
+            if (entryEncrypted && !entryAesAuthenticated) {
+                throw ZipPasswordException("Wrong password or corrupt data for entry: ${currentEntry?.name}")
             }
-            throw Exception("CRC mismatch for entry: ${currentEntry?.name}")
+            throw ZipFormatException("CRC mismatch for entry: ${currentEntry?.name}")
         }
     }
 
@@ -704,7 +731,7 @@ class ZipInputStream @JvmOverloads constructor(
 
     private fun readByte(): Int {
         val b = readRawByte()
-        if (b == -1) throw Exception("Unexpected end of ZIP stream")
+        if (b == -1) throw ZipFormatException("Unexpected end of ZIP stream")
         return b
     }
 
@@ -713,7 +740,7 @@ class ZipInputStream @JvmOverloads constructor(
         var offset = 0
         while (offset < n) {
             val read = readRaw(buf, offset, n - offset)
-            if (read == -1) throw Exception("Unexpected end of ZIP stream")
+            if (read == -1) throw ZipFormatException("Unexpected end of ZIP stream")
             if (read == 0) {
                 throw NoProgressException("Source returned no data while reading the ZIP structure")
             }
@@ -749,9 +776,9 @@ class ZipInputStream @JvmOverloads constructor(
         while (true) {
             if (size >= buf.size) {
                 if (buf.size >= MAX_DATA_DESCRIPTOR_SCAN_BYTES) {
-                    throw Exception(
+                    throw ZipFormatException(
                         "AES entry with data descriptor exceeded $MAX_DATA_DESCRIPTOR_SCAN_BYTES " +
-                            "bytes without a valid descriptor — possible malformed or malicious archive"
+                            "bytes without a valid descriptor - possible malformed or malicious archive"
                     )
                 }
                 buf = buf.copyOf(minOf(buf.size * 2, MAX_DATA_DESCRIPTOR_SCAN_BYTES))
@@ -781,7 +808,7 @@ class ZipInputStream @JvmOverloads constructor(
         }
 
         if (size == 0) {
-            throw Exception("Unexpected end of stream in AES entry with data descriptor")
+            throw ZipFormatException("Unexpected end of stream in AES entry with data descriptor")
         }
 
         // Fallback: scan all buffered data for next entry/central directory header and
@@ -811,7 +838,7 @@ class ZipInputStream @JvmOverloads constructor(
         pushbackBuf = data
         pushbackPos = 0
         pushbackLen = size
-        throw Exception("Cannot determine compressed size for AES entry with data descriptor")
+        throw ZipFormatException("Cannot determine compressed size for AES entry with data descriptor")
     }
 
     companion object {
@@ -849,6 +876,3 @@ fun ZipInputStream(input: InputStream, password: String): ZipInputStream {
 fun ZipInputStream(data: ByteArray, password: String): ZipInputStream {
     return ZipInputStream(no.synth.kmpzip.io.ByteArrayInputStream(data), password.encodeToByteArray())
 }
-
-/** Thrown when an encrypted entry cannot be decrypted (missing or wrong password). */
-class ZipPasswordException(message: String) : Exception(message)

@@ -37,7 +37,7 @@ actual abstract class InputStream actual constructor() : Closeable {
     actual open fun mark(readlimit: Int) {}
 
     actual open fun reset() {
-        throw Exception("mark/reset not supported")
+        throw UnsupportedOperationException("mark/reset not supported")
     }
 
     actual open fun markSupported(): Boolean = false

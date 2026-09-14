@@ -66,7 +66,7 @@ object Crypto {
     }
 
     // Shared CRC32 lookup table (polynomial 0xEDB88320)
-    val CRC32_TABLE = IntArray(256) { n ->
+    internal val CRC32_TABLE = IntArray(256) { n ->
         var c = n
         repeat(8) {
             c = if (c and 1 != 0) {

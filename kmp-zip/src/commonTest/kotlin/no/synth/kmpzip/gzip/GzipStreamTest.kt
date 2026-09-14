@@ -175,7 +175,12 @@ class GzipStreamTest {
         val compressed = gzipCompress(original)
         // Drop the last 100 bytes — payload + trailer are now incomplete.
         val truncated = compressed.copyOf(compressed.size - 100)
-        assertFails { gzipDecompress(truncated) }
+        assertFailsWith<GzipFormatException> { gzipDecompress(truncated) }
+    }
+
+    @Test
+    fun notInGzipFormatThrows() {
+        assertFailsWith<GzipFormatException> { gzipDecompress(ByteArray(32) { it.toByte() }) }
     }
 
     @Test
@@ -185,7 +190,7 @@ class GzipStreamTest {
         // The CRC32 sits at bytes [size-8..size-5). Flip a bit in it.
         val corrupted = compressed.copyOf()
         corrupted[corrupted.size - 8] = (corrupted[corrupted.size - 8].toInt() xor 0x01).toByte()
-        assertFails { gzipDecompress(corrupted) }
+        assertFailsWith<GzipFormatException> { gzipDecompress(corrupted) }
     }
 
     @Test
@@ -195,7 +200,7 @@ class GzipStreamTest {
         // The ISIZE (uncompressed length mod 2^32) sits in the last 4 bytes.
         val corrupted = compressed.copyOf()
         corrupted[corrupted.size - 1] = (corrupted[corrupted.size - 1].toInt() xor 0x01).toByte()
-        assertFails { gzipDecompress(corrupted) }
+        assertFailsWith<GzipFormatException> { gzipDecompress(corrupted) }
     }
 
     @Test

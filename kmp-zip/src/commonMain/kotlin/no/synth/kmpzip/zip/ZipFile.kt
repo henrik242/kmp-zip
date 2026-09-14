@@ -5,6 +5,7 @@ import no.synth.kmpzip.crypto.AesExtraField
 import no.synth.kmpzip.io.ByteArraySeekableSource
 import no.synth.kmpzip.io.Closeable
 import no.synth.kmpzip.io.InputStream
+import no.synth.kmpzip.io.NoProgressException
 import no.synth.kmpzip.io.SeekableSource
 import no.synth.kmpzip.io.SeekableSourceInputStream
 
@@ -87,7 +88,7 @@ class ZipFile @JvmOverloads constructor(
             ?: throw IllegalArgumentException("No such entry: $name")
         val view = SeekableSourceInputStream(source, offset)
         val zis = ZipInputStream(view, password)
-        zis.nextEntry ?: throw Exception("No local file header at offset $offset for entry: $name")
+        zis.nextEntry ?: throw ZipFormatException("No local file header at offset $offset for entry: $name")
         return zis
     }
 
@@ -113,13 +114,13 @@ class ZipFile @JvmOverloads constructor(
         val cdOffset = readLeUInt(eocd.bytes, eocd.offset + 16)
 
         if (cdOffset == 0xFFFFFFFFL || cdSize == 0xFFFFFFFFL || totalEntries == 0xFFFF) {
-            throw Exception("ZIP64 archives are not supported")
+            throw ZipUnsupportedFeatureException("ZIP64 archives are not supported")
         }
         if (diskNumber != 0 || cdStartDisk != 0) {
-            throw Exception("Split/spanned ZIP archives are not supported")
+            throw ZipUnsupportedFeatureException("Split/spanned ZIP archives are not supported")
         }
         if (cdOffset + cdSize > sourceSize) {
-            throw Exception("Central directory extends past end of archive")
+            throw ZipFormatException("Central directory extends past end of archive")
         }
 
         val cd = readFully(cdOffset, cdSize.toInt())
@@ -127,7 +128,7 @@ class ZipFile @JvmOverloads constructor(
         val result = ArrayList<CdEntry>(totalEntries)
         var p = 0
         while (p + 4 <= cd.size && readLeUInt(cd, p) == CENTRAL_DIR_HEADER_SIG) {
-            if (p + CD_FIXED_LEN > cd.size) throw Exception("Truncated central directory header")
+            if (p + CD_FIXED_LEN > cd.size) throw ZipFormatException("Truncated central directory header")
 
             val method = readLeShort(cd, p + 10)
             val time = readLeShort(cd, p + 12)
@@ -144,12 +145,12 @@ class ZipFile @JvmOverloads constructor(
             val extraStart = nameStart + nameLen
             val commentStart = extraStart + extraLen
             val nextStart = commentStart + commentLen
-            if (nextStart > cd.size) throw Exception("Truncated central directory header")
+            if (nextStart > cd.size) throw ZipFormatException("Truncated central directory header")
 
             if (localHeaderOffset == 0xFFFFFFFFL || compressedSize == 0xFFFFFFFFL ||
                 uncompressedSize == 0xFFFFFFFFL
             ) {
-                throw Exception("ZIP64 archives are not supported")
+                throw ZipUnsupportedFeatureException("ZIP64 archives are not supported")
             }
 
             val name = cd.decodeToString(nameStart, extraStart)
@@ -160,7 +161,7 @@ class ZipFile @JvmOverloads constructor(
 
             // Mirror ZipInputStream: report the actual compression method for AES entries.
             val effectiveMethod = if (method == ZipConstants.AE_ENCRYPTED) {
-                AesExtraField.parse(extra)?.actualCompressionMethod ?: method
+                parseAesExtraFieldOrThrow(extra)?.actualCompressionMethod ?: method
             } else {
                 method
             }
@@ -186,7 +187,7 @@ class ZipFile @JvmOverloads constructor(
         // ZIP64 stores a wrapped 16-bit count, and re-appended archives carry a stale
         // count — both open fine in java.util.zip/libzip, so we don't reject them.
         if (result.size < totalEntries) {
-            throw Exception(
+            throw ZipFormatException(
                 "Truncated central directory: expected $totalEntries entries, found ${result.size}"
             )
         }
@@ -197,7 +198,7 @@ class ZipFile @JvmOverloads constructor(
     private class Eocd(val bytes: ByteArray, val offset: Int)
 
     private fun findEndOfCentralDirectory(sourceSize: Long): Eocd {
-        if (sourceSize < EOCD_MIN_LEN) throw Exception("Not a ZIP file: too small")
+        if (sourceSize < EOCD_MIN_LEN) throw ZipFormatException("Not a ZIP file: too small")
 
         // The EOCD is at most EOCD_MIN_LEN + 65535 (max comment) bytes from the end.
         val tailLen = minOf(sourceSize, (EOCD_MIN_LEN + 0xFFFF).toLong()).toInt()
@@ -214,7 +215,7 @@ class ZipFile @JvmOverloads constructor(
                 }
             }
         }
-        throw Exception("Not a ZIP file: end-of-central-directory record not found")
+        throw ZipFormatException("Not a ZIP file: end-of-central-directory record not found")
     }
 
     /** Reads exactly [length] bytes starting at [position], failing on short reads. */
@@ -224,10 +225,11 @@ class ZipFile @JvmOverloads constructor(
         while (off < length) {
             val n = source.read(position + off, buf, off, length - off)
             when {
-                n < 0 -> throw Exception("Unexpected end of source while reading $length bytes at $position")
+                n < 0 -> throw ZipFormatException("Unexpected end of source while reading $length bytes at $position")
                 // A 0 here violates the SeekableSource.read contract (only legal for a
-                // zero-length request) — surface it as such rather than as truncation.
-                n == 0 -> throw Exception("SeekableSource.read returned 0 for a non-empty request at ${position + off}")
+                // zero-length request). ZipInputStream throws NoProgressException for the
+                // identical condition, and its KDoc documents this case, so match it.
+                n == 0 -> throw NoProgressException("SeekableSource.read returned 0 for a non-empty request at ${position + off}")
             }
             off += n
         }
