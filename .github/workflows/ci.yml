@@ -37,6 +37,10 @@ jobs:
         with:
           # v6 made the default cache provider proprietary.
           cache-provider: basic
+          # Only the primary (macOS) job writes the Gradle home cache. The
+          # ubuntu job would otherwise race java8-runtime for the same key,
+          # and the windows save fails on locked *.lock files anyway.
+          cache-read-only: ${{ !matrix.primary }}
       - uses: actions/cache@v6
         with:
           path: ~/.konan
