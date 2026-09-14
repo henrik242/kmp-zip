@@ -57,6 +57,12 @@ internal actual class PlatformInflater actual constructor() {
                     // Mark finished so subsequent calls don't re-enter zlib in a
                     // corrupted state; the caller is expected to close() us.
                     finished = true
+                    // Only bad-data statuses are corruption. Z_MEM_ERROR/Z_STREAM_ERROR and
+                    // the like are operational or internal faults and must not be reported as
+                    // a corrupt archive, so they keep their own type.
+                    if (ret == Z_DATA_ERROR || ret == Z_NEED_DICT) {
+                        throw CodecException("inflate failed: $ret")
+                    }
                     throw IllegalStateException("inflate failed: $ret")
                 }
 

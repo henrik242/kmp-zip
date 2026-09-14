@@ -1,5 +1,6 @@
 package no.synth.kmpzip.zip
 
+import no.synth.kmpzip.crypto.AesExtraField
 import no.synth.kmpzip.crypto.AesStrength
 import no.synth.kmpzip.io.ByteArrayOutputStream
 import kotlin.test.Test
@@ -122,6 +123,81 @@ class AesZipTest {
         val e = assertFailsWith<ZipPasswordException> { zis.nextEntry }
         assertTrue(e.message.orEmpty().contains("Password required"))
         zis.close()
+    }
+
+    @Test
+    fun corruptedAesDataIsFormatErrorNotWrongPassword() {
+        // Round-trip a STORED AES (AE-2) entry, then flip a byte in the encrypted payload.
+        // AE-2 stores no CRC, so the HMAC auth code is the sole integrity gate; a wrong
+        // password would be caught earlier by the password verification value. With the
+        // correct password, corruption must surface as ZipFormatException, not as a
+        // (misleading) ZipPasswordException. STORED avoids the inflate path entirely, so the
+        // flip can only surface at the auth gate. Offset 300 is inside the 2000-byte payload
+        // for every strength (header + salt<=16 + PVV 2 < 300 < payload end), never the PVV
+        // or the trailing auth code.
+        for (strength in AesStrength.entries) {
+            val out = ByteArrayOutputStream()
+            ZipOutputStream(out, testPassword.encodeToByteArray(), aesStrength = strength).use { zos ->
+                zos.setMethod(ZipConstants.STORED)
+                zos.putNextEntry(ZipEntry("a.bin"))
+                zos.write(ByteArray(2000) { (it % 251).toByte() })
+                zos.closeEntry()
+            }
+            val bytes = out.toByteArray()
+            bytes[300] = (bytes[300].toInt() xor 0xFF).toByte()
+            assertFailsWith<ZipFormatException>("strength $strength") {
+                ZipInputStream(bytes, testPassword).use { zis ->
+                    zis.nextEntry
+                    zis.readBytes()
+                    zis.nextEntry // finishing the entry runs the AES auth check
+                }
+            }
+        }
+    }
+
+    @Test
+    fun encryptedEntryWithUnsupportedMethodThrows() {
+        // ZipEntry.method is public; an unsupported method on an encrypted entry must fail
+        // in putNextEntry, not slip past the encryption branch and emit an empty entry.
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out, testPassword.encodeToByteArray()).use { zos ->
+            val entry = ZipEntry("a.bin")
+            entry.method = 6 // imploded, unsupported
+            assertFailsWith<IllegalArgumentException> { zos.putNextEntry(entry) }
+        }
+    }
+
+    @Test
+    fun malformedAesStrengthByteIsFormatError() {
+        // A well-formed AES extra field with an out-of-range strength byte (valid: 1..3)
+        // must surface as ZipFormatException, not leak the parser's IllegalArgumentException,
+        // so untrusted archive data stays catchable as ZipException.
+        val extra = AesExtraField.create(actualCompressionMethod = ZipConstants.DEFLATED)
+        extra[8] = 9 // strength byte; 9 is not a valid AES strength
+        assertFailsWith<ZipFormatException> { parseAesExtraFieldOrThrow(extra) }
+    }
+
+    @Test
+    fun corruptedDeflatedAesDataIsFormatErrorNotWrongPassword() {
+        // DEFLATED (default method): corrupting the encrypted payload usually fails the
+        // inflater before the HMAC gate. AES already verified the password via the check
+        // value, so an inflate failure here is corruption and must surface as
+        // ZipFormatException, not ZipPasswordException.
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out, testPassword.encodeToByteArray()).use { zos ->
+            zos.putNextEntry(ZipEntry("a.bin"))
+            zos.write(ByteArray(4000) { (it % 251).toByte() })
+            zos.closeEntry()
+        }
+        val bytes = out.toByteArray()
+        bytes[bytes.size / 2] = (bytes[bytes.size / 2].toInt() xor 0xFF).toByte()
+        assertFailsWith<ZipFormatException> {
+            ZipInputStream(bytes, testPassword).use { zis ->
+                zis.nextEntry
+                zis.readBytes()
+                zis.nextEntry
+            }
+        }
     }
 
     @Test

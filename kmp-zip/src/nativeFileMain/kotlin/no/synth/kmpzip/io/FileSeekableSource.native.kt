@@ -24,16 +24,16 @@ actual fun fileSeekableSource(path: String): SeekableSource = NativeFileSeekable
 // use 64-bit offsets, so the Windows ceiling is acceptable.
 @OptIn(ExperimentalForeignApi::class)
 private class NativeFileSeekableSource(path: String) : SeekableSource {
-    private val file = fopen(path, "rb") ?: throw Exception("Cannot open file: $path")
+    private val file = fopen(path, "rb") ?: throw IOException("Cannot open file: $path")
     private var closed = false
 
     override val size: Long = run {
-        if (fseek(file, 0.convert(), SEEK_END) != 0) throw Exception("Cannot seek to end of file: $path")
+        if (fseek(file, 0.convert(), SEEK_END) != 0) throw IOException("Cannot seek to end of file: $path")
         val end = ftell(file).convert<Long>()
         // Negative means ftell failed (e.g. a > 2 GB file on 32-bit Windows offsets) —
         // fail loudly instead of letting a bogus size silently truncate every read.
-        if (end < 0) throw Exception("Cannot determine size of file (> 2 GB on this platform?): $path")
-        if (fseek(file, 0.convert(), SEEK_SET) != 0) throw Exception("Cannot rewind file: $path")
+        if (end < 0) throw IOException("Cannot determine size of file (> 2 GB on this platform?): $path")
+        if (fseek(file, 0.convert(), SEEK_SET) != 0) throw IOException("Cannot rewind file: $path")
         end
     }
 
@@ -42,7 +42,7 @@ private class NativeFileSeekableSource(path: String) : SeekableSource {
         if (length == 0) return 0
         if (position >= size) return -1
         if (fseek(file, position.convert(), SEEK_SET) != 0) {
-            throw Exception("Seek to position $position failed (file size $size)")
+            throw IOException("Seek to position $position failed (file size $size)")
         }
         val toRead = minOf(length.toLong(), size - position).toInt()
         return into.usePinned { pinned ->
@@ -52,7 +52,7 @@ private class NativeFileSeekableSource(path: String) : SeekableSource {
                 // position < size was checked above, so a 0 here is a read error, not EOF —
                 // distinguish so we never return 0 for a non-empty request (contract).
                 feof(file) != 0 -> -1
-                else -> throw Exception("Read at position $position failed")
+                else -> throw IOException("Read at position $position failed")
             }
         }
     }

@@ -6,6 +6,8 @@ import no.synth.kmpzip.internal.Uint8Array
 
 internal const val Z_NO_FLUSH = 0
 internal const val Z_FINISH = 4
+internal const val Z_NEED_DICT = 2
+internal const val Z_DATA_ERROR = -3
 internal const val Z_BUF_ERROR = -5
 
 internal fun chunksLength(chunks: JsAny): Int =

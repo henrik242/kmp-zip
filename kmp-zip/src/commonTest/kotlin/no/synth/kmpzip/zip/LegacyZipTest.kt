@@ -27,6 +27,30 @@ class LegacyZipTest {
     }
 
     @Test
+    fun corruptedLegacyDataReportsPasswordOrCorruptData() {
+        // Legacy ZipCrypto has no MAC: with the correct password, corrupt ciphertext fails
+        // only at the CRC check and cannot be told apart from a wrong password. The message
+        // must own that ambiguity rather than flatly blaming the password.
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out, testPassword.encodeToByteArray(), ZipEncryption.LEGACY).use { zos ->
+            zos.setMethod(ZipConstants.STORED)
+            zos.putNextEntry(ZipEntry("a.bin"))
+            zos.write(ByteArray(2000) { (it % 251).toByte() })
+            zos.closeEntry()
+        }
+        val bytes = out.toByteArray()
+        bytes[300] = (bytes[300].toInt() xor 0xFF).toByte() // inside the encrypted data
+        val e = assertFailsWith<ZipPasswordException> {
+            ZipInputStream(bytes, testPassword).use { zis ->
+                zis.nextEntry
+                zis.readBytes()
+                zis.nextEntry
+            }
+        }
+        assertTrue(e.message.orEmpty().contains("corrupt data"))
+    }
+
+    @Test
     fun readLegacyDeflatedEntry() {
         val expectedContent = "Hello, ZipCrypto! ".repeat(100)
         val zis = ZipInputStream(TestData.legacyDeflatedZip, testPassword)
