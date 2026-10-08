@@ -33,7 +33,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v6.3.0
+      - uses: gradle/actions/setup-gradle@v6
         with:
           # v6 made the default cache provider proprietary.
           cache-provider: basic
@@ -120,7 +120,7 @@ jobs:
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v6.3.0
+      - uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
       - uses: actions/cache@v6
