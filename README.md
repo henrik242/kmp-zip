@@ -19,7 +19,7 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 
 ## Targets
 
-- **JVM** (Java 8 baseline, class version 52; also consumable from Android projects)
+- **JVM** (Java 8 baseline, class version 52; also consumable from Android, minSdk 21)
 - **iosArm64**, **iosSimulatorArm64**
 - **macosArm64**, **macosX64**
 - **linuxX64**, **linuxArm64**
