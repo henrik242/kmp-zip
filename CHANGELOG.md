@@ -8,6 +8,15 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 
 n/a
 
+## 1.0.1 - 2026-10-27
+
+### Fixed
+- JVM `fileSeekableSource` no longer uses `java.nio.file`, so it works on Android
+  below API 26 without library desugaring.
+
+### Changed
+- Kotlin 2.4.21.
+
 ## 1.0.0 - 2026-09-14
 
 ### Added
