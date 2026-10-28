@@ -85,13 +85,13 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:1.0.1")
+                implementation("no.synth:kmp-zip:2.0.0")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:1.0.1")
+                implementation("no.synth:kmp-zip-kotlinx:2.0.0")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:1.0.1")
+                implementation("no.synth:kmp-zip-okio:2.0.0")
             }
         }
     }
@@ -654,7 +654,7 @@ To run the JVM tests on a real JDK 8 (it must already be installed):
 ```sh
 ./gradlew jvmTest -Ptest.jvm=8
 ./gradlew publishToMavenLocal && scripts/check-java8-artifacts.sh
-./gradlew -p scripts/java8-consumer run -PkmpzipVersion=1.0.1
+./gradlew -p scripts/java8-consumer run -PkmpzipVersion=2.0.0
 ```
 
 ## Publishing
@@ -662,8 +662,8 @@ To run the JVM tests on a real JDK 8 (it must already be installed):
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v1.0.1
-git push origin v1.0.1
+git tag v2.0.0
+git push origin v2.0.0
 ```
 
 ## License

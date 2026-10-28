@@ -6,6 +6,10 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 
 ## Unreleased
 
+n/a
+
+## 2.0.0 - 2026-10-28
+
 ### Added
 - ZIP64 support. `ZipInputStream` and `ZipFile` read ZIP64 entries, data descriptors and
   end-of-central-directory records. `ZipOutputStream` writes them where needed: entries
