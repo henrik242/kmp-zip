@@ -32,6 +32,10 @@ internal actual class PlatformInflater actual constructor() {
             // Keep the original as cause so the codec type and stack trace survive.
             throw CodecException(e.message ?: "inflate failed: bad compressed data", e)
         }
+        // zlib and pako report a preset dictionary as Z_NEED_DICT; java.util.zip just stops.
+        if (produced == 0 && inf.needsDictionary()) {
+            throw CodecException("inflate failed: preset dictionary required (not supported)")
+        }
         val consumed = (inf.bytesRead - bytesReadBefore).toInt()
 
         return InflateResult(consumed, produced, inf.finished())

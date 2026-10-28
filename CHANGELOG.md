@@ -12,6 +12,10 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
   or offsets of 4 GiB or more, and 65535 or more entries. A DEFLATED entry of unknown
   size that turns out to need ZIP64 gets a ZIP64 data descriptor only, as java.util.zip
   writes it; set `ZipEntry.size` up front to get ZIP64 in its local header as well.
+- zlib and raw DEFLATE streams in the new `no.synth.kmpzip.deflate` package:
+  `InflateInputStream` and `DeflateOutputStream`, with a `DeflateFormat` of `ZLIB`
+  (default) or `RAW`, and `DeflateException` / `DeflateFormatException` for read
+  failures. The kotlinx-io and OkIO modules get matching factories.
 
 ### Changed
 - `ZipOutputStream` buffers its output instead of writing each header field to the
@@ -22,6 +26,12 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
   `0xFFFFFFFF` in its local header; the compressed size defaults to the size.
 - `ZipInputStream` rejects a data descriptor whose sizes do not match a DEFLATED entry's
   data.
+- On native targets, a `read` or `write` slice past the end of its array could make zlib
+  read or write out of bounds. The ZIP and GZIP streams now throw
+  `IndexOutOfBoundsException` for an out-of-range slice on every target.
+- A zero-length `read` on `ZipInputStream` or `GzipInputStream` returns 0 at the end of
+  the entry or stream, as the `InputStream` contract requires, instead of -1. A read
+  loop that relies on -1 from a zero-length read will no longer end.
 - `ZipOutputStream.putNextEntry` rejects an extra field too long to fit the header once
   ZIP64 and AES fields are added, instead of writing a truncated length.
 

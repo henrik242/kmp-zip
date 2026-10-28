@@ -20,7 +20,9 @@ class ZipInputStreamTest {
             assertNotNull(zis.nextEntry)
             zis.readBytes()
         }
-        val out = ByteArray(expected.size + 9) { 0x2A }
+        // One spare byte, so the read that finds the end asks for a byte and gets -1; a
+        // zero-length read returns 0, even at the end.
+        val out = ByteArray(expected.size + 10) { 0x2A }
         var total = 0
         ZipInputStream(TestData.deflatedZip).use { zis ->
             assertNotNull(zis.nextEntry)
@@ -31,7 +33,7 @@ class ZipInputStreamTest {
             }
         }
         assertEquals(expected.size, total)
-        assertContentEquals(expected, out.copyOfRange(9, out.size))
+        assertContentEquals(expected, out.copyOfRange(9, 9 + total))
         for (i in 0 until 9) assertEquals(0x2A, out[i], "clobbered out[$i] before the offset")
     }
 

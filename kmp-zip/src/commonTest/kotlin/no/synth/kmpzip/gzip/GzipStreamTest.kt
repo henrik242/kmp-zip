@@ -20,6 +20,23 @@ class GzipStreamTest {
         return baos.toByteArray()
     }
 
+    @Test
+    fun zeroLengthReadReturnsZeroAtEnd() {
+        GzipInputStream(gzipCompress("abc".encodeToByteArray())).use { gis ->
+            gis.readBytes()
+            assertEquals(0, gis.read(ByteArray(4), 0, 0))
+        }
+    }
+
+    // Native passes the length straight to zlib, so this must fail before zlib writes
+    // past the end of the array.
+    @Test
+    fun oversizedReadRejected() {
+        GzipInputStream(gzipCompress(ByteArray(10_000) { it.toByte() })).use { gis ->
+            assertFailsWith<IndexOutOfBoundsException> { gis.read(ByteArray(1), 0, 8192) }
+        }
+    }
+
     private fun gzipDecompress(data: ByteArray): ByteArray {
         val gis = GzipInputStream(ByteArrayInputStream(data))
         val result = gis.readBytes()

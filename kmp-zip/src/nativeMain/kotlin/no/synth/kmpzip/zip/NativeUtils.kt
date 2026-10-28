@@ -17,6 +17,10 @@ internal fun toUBytePointer(pinned: Pinned<ByteArray>, offset: Int): CPointer<UB
  *
  * zlib ignores `next_in`/`next_out` when the corresponding `avail_*` is zero, so a
  * null pointer is safe to pass.
+ *
+ * `addressOf` checks only the start of the region, and zlib trusts `avail_*` for the
+ * rest, so the whole region is bounds-checked here: an oversized [len] would otherwise
+ * let zlib read or write past the end of [arr].
  */
 @OptIn(ExperimentalForeignApi::class)
 internal inline fun <R> withPinned(
@@ -25,6 +29,9 @@ internal inline fun <R> withPinned(
     len: Int,
     block: (CPointer<UByteVar>?) -> R,
 ): R {
+    if (offset < 0 || len < 0 || len > arr.size - offset) {
+        throw IndexOutOfBoundsException("offset=$offset, len=$len, size=${arr.size}")
+    }
     val pin = if (len > 0) arr.pin() else null
     return try {
         block(if (pin != null) toUBytePointer(pin, offset) else null)

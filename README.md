@@ -1,8 +1,8 @@
 # kmp-zip
 
-Kotlin Multiplatform ZIP and GZIP library for JVM, iOS, macOS, Linux, Windows, Kotlin/JS, and Kotlin/Wasm (wasmJs) targets, with encryption support.
+Kotlin Multiplatform ZIP, GZIP, and zlib/raw DEFLATE library for JVM, iOS, macOS, Linux, Windows, Kotlin/JS, and Kotlin/Wasm (wasmJs) targets, with encryption support.
 
-Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, and `GzipOutputStream` with a common API across platforms. Supports reading and writing encrypted ZIP archives:
+Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, `GzipOutputStream`, `InflateInputStream`, and `DeflateOutputStream` with a common API across platforms. Supports reading and writing encrypted ZIP archives:
 - **WinZip AES** (AES-128/192/256, AE-1 and AE-2 formats) — strong encryption, compatible with 7-Zip, WinRAR, etc.
 - **PKWare traditional** (ZipCrypto) — legacy encryption compatible with all ZIP tools including macOS `zip` and Windows Explorer
 
@@ -154,6 +154,17 @@ kotlin {
 | `GzipException` | Base for GZIP stream failures; extends `IOException`. |
 | `GzipFormatException` | Not GZIP format, corrupt, or truncated. On the JVM, `java.util.zip` codec errors are mapped to this type too. |
 
+### `kmp-zip` - `no.synth.kmpzip.deflate`
+
+| Type | Description |
+|------|-------------|
+| `InflateInputStream(InputStream, format?)` | Decompresses zlib (default) or raw DEFLATE data. Verifies the zlib Adler-32 checksum. Ends with the compressed data, but may have read input past it. |
+| `InflateInputStream(ByteArray, format?)` | Convenience factory |
+| `DeflateOutputStream(OutputStream, format?, level?)` | Compresses as zlib (default) or raw DEFLATE, at level 0-9 or -1 for the codec default: `write()`, `finish()`, `flush()`, `close()` |
+| `DeflateFormat` | `ZLIB` (RFC 1950: 2-byte header, Adler-32 trailer), `RAW` (RFC 1951, as stored in ZIP entries) |
+| `DeflateException` | Base for DEFLATE stream failures; extends `IOException`. |
+| `DeflateFormatException` | Corrupt or truncated data, a bad zlib header or checksum, or a preset dictionary (not supported). |
+
 ### `kmp-zip-kotlinx` — `no.synth.kmpzip.kotlinx`
 
 | Type | Description |
@@ -170,6 +181,8 @@ kotlin {
 | `ZipOutputStream(Sink)` | Factory — creates a `ZipOutputStream` from a `Sink` |
 | `GzipInputStream(Source)` | Factory — creates a `GzipInputStream` from a `Source` |
 | `GzipOutputStream(Sink)` | Factory — creates a `GzipOutputStream` from a `Sink` |
+| `InflateInputStream(Source, format?)` | Factory - creates an `InflateInputStream` from a `Source` |
+| `DeflateOutputStream(Sink, format?, level?)` | Factory - creates a `DeflateOutputStream` from a `Sink` |
 | `FileSystem.zipTo(target, sources, ...)` | Suspend helper — recursively zips files/directories into `target` |
 | `FileSystem.unzipFrom(archive, target, ...)` | Suspend helper — extracts `archive` into `target`, rejecting unsafe entry names |
 
@@ -191,6 +204,8 @@ kotlin {
 | `FileHandle.asSeekableSource()` | Adapts an okio `FileHandle` to a `SeekableSource` |
 | `GzipInputStream(BufferedSource)` | Factory — creates a `GzipInputStream` from a `BufferedSource` |
 | `GzipOutputStream(BufferedSink)` | Factory — creates a `GzipOutputStream` from a `BufferedSink` |
+| `InflateInputStream(BufferedSource, format?)` | Factory - creates an `InflateInputStream` from a `BufferedSource` |
+| `DeflateOutputStream(BufferedSink, format?, level?)` | Factory - creates a `DeflateOutputStream` from a `BufferedSink` |
 | `FileSystem.zipTo(target, sources, ...)` | Suspend helper — recursively zips files/directories into `target` |
 | `FileSystem.unzipFrom(archive, target, ...)` | Suspend helper — extracts `archive` into `target`, rejecting unsafe entry names |
 
@@ -199,7 +214,7 @@ kotlin {
 Read failures throw typed exceptions. All extend `no.synth.kmpzip.io.IOException`, which
 on the JVM is a typealias to `java.io.IOException`, so existing `catch (IOException)`
 handlers keep working there; in common code, import and catch `no.synth.kmpzip.io.IOException`.
-Each format also has a catchable base (`ZipException`, `GzipException`):
+Each format also has a catchable base (`ZipException`, `GzipException`, `DeflateException`):
 
 ```kotlin
 import no.synth.kmpzip.zip.ZipException
@@ -219,7 +234,7 @@ try {
 ```
 
 New subtypes may appear in future versions, so always keep the base (`ZipException` /
-`GzipException`, or `IOException`) as a fallback branch. WinZip AES entries carry a MAC,
+`GzipException` / `DeflateException`, or `IOException`) as a fallback branch. WinZip AES entries carry a MAC,
 so a wrong password is reported as `ZipPasswordException` and later corruption as
 `ZipFormatException`; legacy PKWare ZipCrypto has no MAC, so it cannot tell the two apart
 and its `ZipPasswordException` message says so.
@@ -357,6 +372,22 @@ val gzipped = buf.toByteArray()
 // Decompress
 val text = GzipInputStream(gzipped).use { gzis ->
     gzis.readBytes().decodeToString()
+}
+```
+
+### zlib and raw DEFLATE
+
+```kotlin
+// Compress as zlib (the default); pass DeflateFormat.RAW for bare DEFLATE data
+val buf = ByteArrayOutputStream()
+DeflateOutputStream(buf, level = 9).use { dos ->
+    dos.write("Hello, world!".encodeToByteArray())
+}
+val compressed = buf.toByteArray()
+
+// Decompress
+val text = InflateInputStream(compressed).use { iis ->
+    iis.readBytes().decodeToString()
 }
 ```
 
