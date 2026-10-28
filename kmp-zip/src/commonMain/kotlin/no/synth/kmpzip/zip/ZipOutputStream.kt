@@ -40,9 +40,9 @@ private fun zip64Field(value: Long): Int =
  * directory handle that, but some streaming readers do not.
  *
  * Entries are written as they come, encrypted ones included. A STORED entry carries its
- * sizes in the local header ([ZipEntry.size] and [ZipEntry.crc] must be set, except that
- * an encrypted STORED entry may leave them unset, and an AE-2 one needs only the size).
- * Any other entry is followed by a data descriptor. [ZipEntry.size], [ZipEntry.crc] and
+ * sizes in the local header, so [ZipEntry.size] and [ZipEntry.crc] must be set before
+ * [putNextEntry] (only the size for AE-2, which stores no CRC). A DEFLATED entry is
+ * followed by a data descriptor. [ZipEntry.size], [ZipEntry.crc] and
  * [ZipEntry.compressedSize] are set from the written data when the entry is closed.
  *
  * @param output the underlying output stream
@@ -169,12 +169,16 @@ class ZipOutputStream @JvmOverloads constructor(
 
         val aes = password != null && encryption == ZipEncryption.AES
         val legacy = password != null && encryption == ZipEncryption.LEGACY
-        if (method == ZipConstants.STORED && password == null && (entry.size == -1L || entry.crc == -1L)) {
-            throw IllegalArgumentException("STORED entry requires size and crc to be set")
+        // A STORED entry's sizes go in its local header: with a data descriptor instead,
+        // nothing marks where its data ends for a streaming reader. AE-2 stores no CRC, so
+        // an AES entry only needs its size.
+        val crcWritten = !(aes && aesVersion == 2)
+        if (method == ZipConstants.STORED && (entry.size == -1L || (crcWritten && entry.crc == -1L))) {
+            throw IllegalArgumentException(
+                if (crcWritten) "STORED entry requires size and crc to be set" else "STORED entry requires size to be set"
+            )
         }
-        // AE-2 stores no CRC, so an AES entry only needs its size to be known up front.
-        entrySizesInHeader = method == ZipConstants.STORED && entry.size >= 0 &&
-            (entry.crc >= 0 || (aes && aesVersion == 2))
+        entrySizesInHeader = method == ZipConstants.STORED
         entryOverhead = when {
             aes -> aesStrength.saltLength.toLong() + 2 + WinZipAesCipher.AUTH_CODE_LENGTH
             legacy -> ZipCrypto.ENCRYPTION_HEADER_SIZE.toLong()
@@ -194,10 +198,10 @@ class ZipOutputStream @JvmOverloads constructor(
         }
 
         val compressedSize = if (entrySizesInHeader) entry.size + entryOverhead else 0L
-        val headerCrc = if (!entrySizesInHeader || (aes && aesVersion == 2)) 0L else entry.crc
+        val headerCrc = if (!entrySizesInHeader || !crcWritten) 0L else entry.crc
         entryDeclaredSize = entry.size
         // ZipCrypto's check byte is taken from the CRC too, so it must match as well.
-        entryDeclaredCrc = if (entrySizesInHeader && !(aes && aesVersion == 2)) entry.crc else -1L
+        entryDeclaredCrc = if (entrySizesInHeader && crcWritten) entry.crc else -1L
         entryZip64 = entry.size >= ZipConstants.ZIP64_MAGIC || compressedSize >= ZipConstants.ZIP64_MAGIC
         writeLocalFileHeader(entry, entryHeaderMethod, entryFlag, entryVersion, entryZip64, headerCrc, compressedSize, entry.size)
 

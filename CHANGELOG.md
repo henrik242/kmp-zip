@@ -19,13 +19,14 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 
 ### Changed
 - `ZipOutputStream` streams encrypted entries instead of holding them in memory until
-  `closeEntry`, so they are no longer limited to 2 GiB. They are written with a data
-  descriptor, except a STORED entry with `size` set (and `crc`, unless AE-2), which
-  keeps its sizes in the local header. An encrypted STORED entry without them can only
-  be read by readers that use the central directory. `ZipEntry.size`, `crc` and
-  `compressedSize` are set from the written data when an entry closes, and a STORED
-  entry whose data does not match the `size` or `crc` it was given now fails at
-  `closeEntry` instead of writing a corrupt archive. Its bytes are already written, so
+  `closeEntry`, so they are no longer limited to 2 GiB. A DEFLATED entry is written
+  with a data descriptor; a STORED entry keeps its sizes in the local header.
+- **Breaking:** an encrypted STORED entry now needs `size` and `crc` set before
+  `putNextEntry` (AE-2 only `size`), as an unencrypted one always did. Without them it
+  used to be buffered until `closeEntry`; it now throws `IllegalArgumentException`.
+- `ZipEntry.size`, `crc` and `compressedSize` are set from the written data when an
+  entry closes, and a STORED entry whose data does not match the `size` or `crc` it was
+  given now fails at `closeEntry` instead of writing a corrupt archive. Its bytes are already written, so
   the archive cannot then be continued or finished, and `close()` closes the output
   without a central directory. The `crc` is not checked for AE-2, which does not store
   it, so an AE-2 entry read from another archive can be copied.
@@ -40,10 +41,13 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
   tools that follow the spec no longer read non-ASCII names and comments as CP437. When reading, a name or
   comment without the flag is decoded as UTF-8 if it is valid UTF-8, and as CP437
   otherwise; before, it was always decoded as UTF-8.
-- `ZipInputStream` reads STORED entries that have a data descriptor. An unencrypted one
-  used to swallow the rest of the archive, and a legacy-encrypted one without sizes in
-  its local header read as empty. `ZipFile` passes the size from the central directory,
-  so it never has to scan for the descriptor.
+- STORED entries with a data descriptor. When the local header has their sizes,
+  `ZipInputStream` uses them; an unencrypted one used to swallow the rest of the
+  archive. Without sizes, an unencrypted one is now rejected with
+  `ZipUnsupportedFeatureException`, as java.util.zip does, since nothing reliably marks
+  where its data ends; an encrypted one (as zip4j writes them) is found by scanning,
+  checked by its auth code or CRC, and a legacy-encrypted one no longer reads as empty.
+  `ZipFile` reads all of them, using the sizes from the central directory.
 - `ZipOutputStream` rejects an entry name, entry comment, or archive comment longer than
   65535 bytes instead of writing a truncated length.
 - A STORED entry written without `ZipEntry.compressedSize` set no longer gets

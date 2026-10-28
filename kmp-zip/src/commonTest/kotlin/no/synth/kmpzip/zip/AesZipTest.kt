@@ -138,8 +138,10 @@ class AesZipTest {
         for (strength in AesStrength.entries) {
             val out = ByteArrayOutputStream()
             ZipOutputStream(out, testPassword.encodeToByteArray(), aesStrength = strength).use { zos ->
-                zos.setMethod(ZipConstants.STORED)
-                zos.putNextEntry(ZipEntry("a.bin"))
+                val entry = ZipEntry("a.bin")
+                entry.method = ZipConstants.STORED
+                entry.size = 2000 // AE-2 stores no CRC, so the size is all it needs
+                zos.putNextEntry(entry)
                 zos.write(ByteArray(2000) { (it % 251).toByte() })
                 zos.closeEntry()
             }

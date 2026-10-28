@@ -101,6 +101,35 @@ object Zip4jTestDataGenerator {
         return baos.toByteArray()
     }
 
+    /**
+     * A small DEFLATED entry, a STORED one (zip4j writes it with a data descriptor and no
+     * sizes), a 10 KB DEFLATED one and a small one, with AES or legacy encryption.
+     */
+    fun mixedWithStored(): List<Pair<String, ByteArray>> {
+        val random = java.util.Random(7)
+        return listOf(
+            "a.txt" to "small deflated".toByteArray(),
+            "stored.txt" to "small stored".toByteArray(),
+            "c.bin" to ByteArray(10_000).also { random.nextBytes(it) },
+            "d.txt" to "last".toByteArray(),
+        )
+    }
+
+    fun mixedWithStoredZip(aes: Boolean): ByteArray {
+        val baos = ByteArrayOutputStream()
+        Zip4jOutputStream(baos, PASSWORD.toCharArray()).use { zos ->
+            for ((name, data) in mixedWithStored()) {
+                val method = if (name == "stored.txt") CompressionMethod.STORE else CompressionMethod.DEFLATE
+                val params = if (aes) aesParams(name, method) else legacyParams(name, method)
+                if (method == CompressionMethod.STORE) params.entrySize = data.size.toLong()
+                zos.putNextEntry(params)
+                zos.write(data)
+                zos.closeEntry()
+            }
+        }
+        return baos.toByteArray()
+    }
+
     /** Single legacy-encrypted stored entry. */
     fun legacyStored(): ByteArray {
         val content = "Stored legacy content".toByteArray()

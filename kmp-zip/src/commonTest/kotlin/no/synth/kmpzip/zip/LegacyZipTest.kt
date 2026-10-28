@@ -1,5 +1,6 @@
 package no.synth.kmpzip.zip
 
+import no.synth.kmpzip.crypto.Crypto
 import no.synth.kmpzip.io.ByteArrayOutputStream
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -33,9 +34,13 @@ class LegacyZipTest {
         // must own that ambiguity rather than flatly blaming the password.
         val out = ByteArrayOutputStream()
         ZipOutputStream(out, testPassword.encodeToByteArray(), ZipEncryption.LEGACY).use { zos ->
-            zos.setMethod(ZipConstants.STORED)
-            zos.putNextEntry(ZipEntry("a.bin"))
-            zos.write(ByteArray(2000) { (it % 251).toByte() })
+            val data = ByteArray(2000) { (it % 251).toByte() }
+            val entry = ZipEntry("a.bin")
+            entry.method = ZipConstants.STORED
+            entry.size = data.size.toLong()
+            entry.crc = Crypto.crc32(data)
+            zos.putNextEntry(entry)
+            zos.write(data)
             zos.closeEntry()
         }
         val bytes = out.toByteArray()
@@ -160,7 +165,7 @@ class LegacyZipTest {
         val entry = ZipEntry("stored.txt")
         entry.method = ZipConstants.STORED
         entry.size = content.length.toLong()
-        entry.compressedSize = content.length.toLong()
+        entry.crc = Crypto.crc32(content.encodeToByteArray())
         zos.putNextEntry(entry)
         zos.write(content.encodeToByteArray())
         zos.closeEntry()

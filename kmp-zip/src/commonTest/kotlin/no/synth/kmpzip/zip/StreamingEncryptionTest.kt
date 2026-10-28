@@ -36,11 +36,9 @@ class StreamingEncryptionTest {
         Spec("aes deflated", ZipEncryption.AES, ZipConstants.DEFLATED),
         Spec("aes-128 deflated", ZipEncryption.AES, ZipConstants.DEFLATED, AesStrength.AES_128),
         Spec("aes-192 deflated ae-1", ZipEncryption.AES, ZipConstants.DEFLATED, AesStrength.AES_192, aesVersion = 1),
-        Spec("aes stored", ZipEncryption.AES, ZipConstants.STORED),
         Spec("aes stored sized", ZipEncryption.AES, ZipConstants.STORED, setSize = true),
         Spec("aes stored sized ae-1", ZipEncryption.AES, ZipConstants.STORED, aesVersion = 1, setSize = true, setCrc = true),
         Spec("legacy deflated", ZipEncryption.LEGACY, ZipConstants.DEFLATED),
-        Spec("legacy stored", ZipEncryption.LEGACY, ZipConstants.STORED),
         Spec("legacy stored sized", ZipEncryption.LEGACY, ZipConstants.STORED, setSize = true, setCrc = true),
     )
 
@@ -125,35 +123,21 @@ class StreamingEncryptionTest {
         }
     }
 
-    // A small DEFLATED entry's read-ahead (16 KiB) holds the rest of the archive, and goes
-    // back to the input when the entry ends. The unsized STORED entry after it is scanned
-    // for its descriptor 4 KiB at a time from there; the scan must keep what it did not
-    // reach, the 10 KiB entry after it.
+    // A STORED entry's sizes go in its local header; with a data descriptor instead, a
+    // streaming reader could not tell where its data ends.
     @Test
-    fun storedEntryAfterDeflatedReadAhead() {
-        val tenK = big.copyOf(10_000)
-        val files = listOf("a.txt" to small, "stored.txt" to small, "c.bin" to tenK, "d.txt" to small)
-        for (encryption in ZipEncryption.entries) {
+    fun storedEntryWithoutSizesRejected() {
+        val cases = listOf(
+            Triple(ZipEncryption.AES, 2, ZipEntry("ae-2 without size")),
+            Triple(ZipEncryption.AES, 1, ZipEntry("ae-1 without crc").apply { size = 1 }),
+            Triple(ZipEncryption.LEGACY, 2, ZipEntry("legacy without crc").apply { size = 1 }),
+        )
+        for ((encryption, aesVersion, entry) in cases) {
+            entry.method = ZipConstants.STORED
             val baos = ByteArrayOutputStream()
-            ZipOutputStream(baos, password.encodeToByteArray(), encryption).use { zos ->
-                zos.setLevel(0)
-                for ((name, data) in files) {
-                    val method = if (name == "stored.txt") ZipConstants.STORED else ZipConstants.DEFLATED
-                    zos.putNextEntry(newEntry(name, data, Spec(name, encryption, method)))
-                    zos.write(data)
-                }
-            }
-            val read = mutableListOf<Pair<String, ByteArray>>()
-            ZipInputStream(baos.toByteArray(), password).use { zis ->
-                while (true) {
-                    val entry = zis.nextEntry ?: break
-                    read.add(entry.name to zis.readBytes())
-                }
-            }
-            assertEquals(files.map { it.first }, read.map { it.first }, "$encryption")
-            for ((expected, actual) in files.zip(read)) {
-                assertContentEquals(expected.second, actual.second, "$encryption ${expected.first}")
-            }
+            val zos = ZipOutputStream(baos, password.encodeToByteArray(), encryption, aesVersion = aesVersion)
+            assertFailsWith<IllegalArgumentException>(entry.name) { zos.putNextEntry(entry) }
+            assertEquals(0, baos.size(), entry.name)
         }
     }
 

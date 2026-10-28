@@ -39,6 +39,13 @@ internal fun parseAesExtraFieldOrThrow(extra: ByteArray?): AesExtraField? =
  * listing/selecting entries without reading them, prefer [ZipFile], which reads the
  * central directory directly.
  *
+ * **Unencrypted STORED entries need their sizes.** A STORED entry with a data descriptor
+ * and no sizes in its local header has nothing that reliably marks where its data ends.
+ * An unencrypted one is rejected with [ZipUnsupportedFeatureException], as java.util.zip
+ * does; an encrypted one (as zip4j writes them) is scanned for its descriptor, up to
+ * 256 MiB, and its auth code or CRC catches a wrong guess. [ZipFile] reads both, using
+ * the sizes from the central directory.
+ *
  * @param input the underlying input stream
  * @param password optional password for decrypting encrypted entries (as UTF-8 bytes)
  */
@@ -105,7 +112,7 @@ class ZipInputStream @JvmOverloads constructor(
     private var rawBuf: ByteArray? = null
     private var entryEncryptionOverhead = 0L
     // Compressed size of the next entry from the central directory, set by ZipFile so an
-    // entry with a data descriptor and no sizes in its local header is not scanned for.
+    // entry with a data descriptor and no sizes in its local header can still be read.
     internal var nextEntryCompressedSize: Long = -1
 
     // True when the current entry's local header has a ZIP64 extra field.
@@ -260,8 +267,8 @@ class ZipInputStream @JvmOverloads constructor(
                 aesRemainingEncryptedBytes = Long.MAX_VALUE
                 entryEndsWithInflater = true
             } else {
-                // Data descriptor entry with unknown size: scan ahead to find the
-                // data descriptor and determine the actual compressed size.
+                // A STORED entry with a data descriptor and unknown size: scan ahead for the
+                // descriptor. The auth code turns a wrong guess into an error.
                 val aesPrefixLength = aesField.strength.saltLength + 2 // salt + PVV
                 val resolved = resolveDataDescriptorCompressedSize(aesPrefixLength, entryZip64)
                 aesRemainingEncryptedBytes =
@@ -297,6 +304,7 @@ class ZipInputStream @JvmOverloads constructor(
                 entryEndsWithInflater = true
                 Long.MAX_VALUE
             } else {
+                // As for AES, but only the CRC check catches a wrong guess.
                 val resolved = resolveDataDescriptorCompressedSize(ZipCrypto.ENCRYPTION_HEADER_SIZE, entryZip64)
                 resolved - ZipCrypto.ENCRYPTION_HEADER_SIZE
             }
@@ -323,13 +331,11 @@ class ZipInputStream @JvmOverloads constructor(
 
         when (effectiveMethod) {
             ZipConstants.STORED -> {
-                // Stored data ends where its size says. A data descriptor entry without
-                // sizes in its local header has to be scanned for its end, as an encrypted
-                // one already was above.
+                // Stored data ends where its size says; an encrypted one's was set above.
                 remainingBytes = when {
                     aesCipher != null -> aesRemainingEncryptedBytes
                     legacyCipher != null -> legacyRemainingEncryptedBytes
-                    !sizeKnown -> resolveDataDescriptorCompressedSize(0, entryZip64, plainStored = true)
+                    !sizeKnown -> throw unsizedStoredEntry(name)
                     else -> compressedSize
                 }
             }
@@ -831,7 +837,7 @@ class ZipInputStream @JvmOverloads constructor(
     }
 
     /**
-     * For encrypted entries with data descriptor (compressedSize=0 in local header),
+     * For encrypted STORED entries with data descriptor (compressedSize=0 in local header),
      * reads stream data incrementally to locate the data descriptor and determine
      * the actual compressed size. Stops reading as soon as the descriptor is found,
      * avoiding buffering the entire stream for multi-entry zips. All buffered data
@@ -847,7 +853,7 @@ class ZipInputStream @JvmOverloads constructor(
      * @return the compressed size from the data descriptor
      * @throws Exception if the data descriptor cannot be found
      */
-    private fun resolveDataDescriptorCompressedSize(consumedPrefixLength: Int, zip64: Boolean, plainStored: Boolean = false): Long {
+    private fun resolveDataDescriptorCompressedSize(consumedPrefixLength: Int, zip64: Boolean): Long {
         // Read into a growing buffer, scanning for the data descriptor after each
         // chunk. This stops as soon as the descriptor is found, so for multi-entry
         // zips we only buffer the current entry's data (not subsequent entries).
@@ -867,8 +873,6 @@ class ZipInputStream @JvmOverloads constructor(
         fun fits(data: ByteArray, ddStart: Int, dataLen: Int): Boolean {
             val cs = sizeAt(data, ddStart + 4)
             if (cs != prefixLen + dataLen) return false
-            // Stored data is its own compressed form.
-            if (plainStored && sizeAt(data, ddStart + 4 + sizeLen) != cs) return false
             val next = readLeUInt(data, ddStart + ddLen)
             return next == LOCAL_HEADER_SIG || next == CENTRAL_HEADER_SIG
         }
@@ -926,11 +930,17 @@ class ZipInputStream @JvmOverloads constructor(
         throw ZipFormatException("Cannot determine compressed size for entry with data descriptor")
     }
 
+    // Without sizes, a STORED entry's end could only be guessed by scanning for something
+    // that looks like a data descriptor, and its data can contain one. Unencrypted, nothing
+    // would catch a wrong guess.
+    private fun unsizedStoredEntry(name: String) = ZipUnsupportedFeatureException(
+        "STORED entry with a data descriptor and no sizes cannot be read as a stream: $name. Read it with ZipFile."
+    )
+
     companion object {
         /**
-         * Hard cap on bytes buffered while scanning for an AES data descriptor.
-         * Bounds memory if a malformed/malicious entry never produces a valid descriptor;
-         * legitimate single AES entries of this size are not in scope for this code path.
+         * Hard cap on bytes buffered while scanning for an encrypted STORED entry's data
+         * descriptor. Bounds memory if a malformed/malicious entry never produces a valid one.
          */
         private const val MAX_DATA_DESCRIPTOR_SCAN_BYTES = 256 * 1024 * 1024
 

@@ -1,6 +1,7 @@
 package no.synth.kmpzip.zip
 
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -126,5 +127,25 @@ class Zip4jInteropTest {
         assertEquals("Stored legacy content", readEntryContent(zis))
         assertNull(zis.nextEntry)
         zis.close()
+    }
+
+    // The STORED entry is scanned for its descriptor from the DEFLATED entry's read-ahead,
+    // which also holds the entries after it; the scan must keep what it does not reach.
+    @Test
+    fun readZip4jStoredBetweenDeflatedEntries() {
+        for (aes in listOf(true, false)) {
+            val expected = Zip4jTestDataGenerator.mixedWithStored()
+            val read = mutableListOf<Pair<String, ByteArray>>()
+            ZipInputStream(Zip4jTestDataGenerator.mixedWithStoredZip(aes), password).use { zis ->
+                while (true) {
+                    val entry = zis.nextEntry ?: break
+                    read.add(entry.name to zis.readBytes())
+                }
+            }
+            assertEquals(expected.map { it.first }, read.map { it.first }, "aes=$aes")
+            for ((e, r) in expected.zip(read)) {
+                assertContentEquals(e.second, r.second, "aes=$aes ${e.first}")
+            }
+        }
     }
 }

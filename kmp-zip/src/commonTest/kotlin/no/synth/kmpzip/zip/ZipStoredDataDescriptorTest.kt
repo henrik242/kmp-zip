@@ -2,6 +2,8 @@ package no.synth.kmpzip.zip
 
 import no.synth.kmpzip.crypto.Crypto
 import no.synth.kmpzip.io.ByteArrayOutputStream
+import no.synth.kmpzip.io.NoProgressException
+import no.synth.kmpzip.io.StallingInputStream
 import no.synth.kmpzip.io.readBytes
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -91,8 +93,10 @@ class ZipStoredDataDescriptorTest {
     )
 
     @Test
-    fun zipInputStreamReadsPythonStoredEntries() {
-        assertEquals(pythonEntries, readAll(TestData.pythonStoredDdZip))
+    fun zipInputStreamRejectsUnsizedStoredEntries() {
+        ZipInputStream(TestData.pythonStoredDdZip).use { zis ->
+            assertFailsWith<ZipUnsupportedFeatureException> { zis.nextEntry }
+        }
     }
 
     @Test
@@ -110,8 +114,12 @@ class ZipStoredDataDescriptorTest {
     }
 
     @Test
-    fun missingSizesAreFoundFromTheDescriptor() {
-        assertEquals(listOf("stored.txt" to content.decodeToString()), readAll(withDataDescriptor(storedZip(), zeroSizes = true)))
+    fun missingSizesAreTakenFromTheCentralDirectory() {
+        val data = withDataDescriptor(storedZip(), zeroSizes = true)
+        assertFailsWith<ZipUnsupportedFeatureException> { readAll(data) }
+        ZipFile(data).use { zip ->
+            assertEquals(content.decodeToString(), zip.getInputStream("stored.txt").use { it.readBytes().decodeToString() })
+        }
     }
 
     @Test
@@ -131,37 +139,47 @@ class ZipStoredDataDescriptorTest {
         assertFailsWith<ZipFormatException> { readAll(data) }
     }
 
+    // A descriptor signature, twelve zero bytes and a local header signature: an empty
+    // entry followed by another, to anything scanning for the descriptor.
     @Test
     fun payloadThatLooksLikeADescriptorIsKept() {
-        // A descriptor signature and twelve zero bytes: an empty entry's descriptor, if
-        // nothing checked that a header follows it.
-        val tricky = byteArrayOf(0x50, 0x4b, 0x07, 0x08) + ByteArray(12) + "and the rest".encodeToByteArray()
+        val tricky = byteArrayOf(0x50, 0x4b, 0x07, 0x08) + ByteArray(12) +
+            byteArrayOf(0x50, 0x4b, 0x03, 0x04) + "and the rest".encodeToByteArray()
         val data = withDataDescriptor(storedZip(content = tricky), zeroSizes = true)
-        ZipInputStream(data).use { zis ->
-            assertNotNull(zis.nextEntry)
-            assertContentEquals(tricky, zis.readBytes())
-            assertNull(zis.nextEntry)
+        ZipFile(data).use { zip ->
+            assertContentEquals(tricky, zip.getInputStream("stored.txt").use { it.readBytes() })
         }
+        val legacy = withDataDescriptor(storedZip("pw", content = tricky), zeroSizes = true, zeroCrc = false)
+        // Encrypted, the scan sees ciphertext, so the plaintext pattern cannot mislead it.
+        assertEquals(listOf("stored.txt" to tricky.decodeToString()), readAll(legacy, "pw"))
     }
 
-    // The DEFLATED entries' read-ahead holds later entries when the STORED ones after them
-    // are scanned for their descriptors; the scan must keep what it does not reach.
     @Test
     fun mixedMethodsWithDescriptors() {
         val expected = listOf("a.txt" to 15L, "stored.txt" to 13L, "c.bin" to 10_000L, "d.txt" to 12L)
         val crcs = listOf(0xf1f886f4L, 0x9f28c552L, 0x1e3d49d1L, 0xb6af2396L)
-        val read = mutableListOf<Pair<String, ByteArray>>()
-        ZipInputStream(TestData.pythonMixedDdZip).use { zis ->
-            while (true) {
-                val entry = zis.nextEntry ?: break
-                read.add(entry.name to zis.readBytes())
+        ZipFile(TestData.pythonMixedDdZip).use { zip ->
+            assertEquals(expected.map { it.first }, zip.entries.map { it.name })
+            for ((i, name) in expected.map { it.first }.withIndex()) {
+                val bytes = zip.getInputStream(name).use { it.readBytes() }
+                assertEquals(expected[i].second, bytes.size.toLong(), name)
+                assertEquals(crcs[i], Crypto.crc32(bytes), name)
             }
         }
-        assertEquals(expected, read.map { it.first to it.second.size.toLong() })
-        assertEquals(crcs, read.map { Crypto.crc32(it.second) })
-        ZipFile(TestData.pythonMixedDdZip).use { zip ->
-            assertEquals(crcs[2], Crypto.crc32(zip.getInputStream("c.bin").use { it.readBytes() }))
-            assertEquals("last stored\n", zip.getInputStream("d.txt").use { it.readBytes().decodeToString() })
+        // Streaming reads the DEFLATED entry, then stops at the unsized STORED one.
+        ZipInputStream(TestData.pythonMixedDdZip).use { zis ->
+            assertEquals("a.txt", assertNotNull(zis.nextEntry).name)
+            assertEquals(crcs[0], Crypto.crc32(zis.readBytes()))
+            assertFailsWith<ZipUnsupportedFeatureException> { zis.nextEntry }
+        }
+    }
+
+    @Test
+    fun stalledSourceWhileScanningThrowsInsteadOfSpinning() {
+        val data = withDataDescriptor(storedZip("pw"), zeroSizes = true, zeroCrc = false)
+        // Past the local header (30 + 10) and the 12-byte encryption header.
+        assertFailsWith<NoProgressException> {
+            ZipInputStream(StallingInputStream(data, 60), "pw").use { it.nextEntry }
         }
     }
 
@@ -177,7 +195,7 @@ class ZipStoredDataDescriptorTest {
 
     @Test
     fun stopsAtCentralDirectory() {
-        ZipInputStream(withDataDescriptor(storedZip(), zeroSizes = true)).use { zis ->
+        ZipInputStream(withDataDescriptor(storedZip(), zeroSizes = false)).use { zis ->
             assertNotNull(zis.nextEntry)
             zis.readBytes()
             assertNull(zis.nextEntry)
