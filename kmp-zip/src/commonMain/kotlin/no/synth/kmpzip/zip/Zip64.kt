@@ -65,21 +65,33 @@ internal fun zip64ExtraField(vararg values: Long): ByteArray {
  * its own ZIP64 field from the actual sizes, so one carried over from an entry read
  * from another archive must not reach the output.
  */
-internal fun stripZip64Extra(extra: ByteArray?): ByteArray? {
-    if (Zip64Extra.find(extra) == null) return extra
-    val src = checkNotNull(extra)
+internal fun stripZip64Extra(extra: ByteArray?): ByteArray? = stripExtraField(extra, ZipConstants.ZIP64_EXTRA_ID)
+
+/** Returns [extra] without any field with header [id], or null if nothing remains. */
+internal fun stripExtraField(extra: ByteArray?, id: Int): ByteArray? {
+    if (extra == null || !hasExtraField(extra, id)) return extra
+    val src = extra
     val out = ArrayList<Byte>(src.size)
     var p = 0
     while (p + 4 <= src.size) {
-        val id = readLeShort(src, p)
+        val fieldId = readLeShort(src, p)
         val end = minOf(p + 4 + readLeShort(src, p + 2), src.size)
-        if (id != ZipConstants.ZIP64_EXTRA_ID) {
+        if (fieldId != id) {
             for (i in p until end) out.add(src[i])
         }
         p = end
     }
     for (i in p until src.size) out.add(src[i])
     return if (out.isEmpty()) null else out.toByteArray()
+}
+
+private fun hasExtraField(extra: ByteArray, id: Int): Boolean {
+    var p = 0
+    while (p + 4 <= extra.size) {
+        if (readLeShort(extra, p) == id) return true
+        p += 4 + readLeShort(extra, p + 2)
+    }
+    return false
 }
 
 private fun writeLeShort(out: ByteArray, offset: Int, v: Int) {

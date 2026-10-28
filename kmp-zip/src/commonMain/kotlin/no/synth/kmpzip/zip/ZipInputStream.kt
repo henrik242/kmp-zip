@@ -96,6 +96,15 @@ class ZipInputStream @JvmOverloads constructor(
 
     private var firstSignatureRead: Boolean = false
 
+    // An encrypted DEFLATED entry with a data descriptor and no sizes ends where its
+    // deflate stream ends. Its bytes are decrypted ahead of the inflater, so the
+    // ciphertext is kept in rawBuf: what the inflater does not consume (the AES auth code
+    // and the descriptor) goes back to the input as read, and only consumed ciphertext is
+    // authenticated.
+    private var entryEndsWithInflater = false
+    private var rawBuf: ByteArray? = null
+    private var entryEncryptionOverhead = 0L
+
     // True when the current entry's local header has a ZIP64 extra field.
     private var entryZip64: Boolean = false
 
@@ -204,6 +213,8 @@ class ZipInputStream @JvmOverloads constructor(
 
         // Determine the actual compression method
         var effectiveMethod = method
+        entryEndsWithInflater = false
+        entryEncryptionOverhead = 0
         aesCipher = null
         legacyCipher = null
         actualCompressionMethod = method
@@ -232,6 +243,10 @@ class ZipInputStream @JvmOverloads constructor(
             if (compressedSize > 0) {
                 aesRemainingEncryptedBytes = compressedSize -
                     aesField.strength.saltLength - 2 - WinZipAesCipher.AUTH_CODE_LENGTH
+            } else if (aesField.actualCompressionMethod == ZipConstants.DEFLATED) {
+                aesRemainingEncryptedBytes = Long.MAX_VALUE
+                entryEndsWithInflater = true
+                entryEncryptionOverhead = aesField.strength.saltLength.toLong() + 2 + WinZipAesCipher.AUTH_CODE_LENGTH
             } else {
                 // Data descriptor entry with unknown size: scan ahead to find the
                 // data descriptor and determine the actual compressed size.
@@ -265,6 +280,10 @@ class ZipInputStream @JvmOverloads constructor(
             // like macOS zip fill in sizes AND set the data descriptor flag).
             legacyRemainingEncryptedBytes = if (compressedSize > 0) {
                 compressedSize - ZipCrypto.ENCRYPTION_HEADER_SIZE
+            } else if (method == ZipConstants.DEFLATED) {
+                entryEndsWithInflater = true
+                entryEncryptionOverhead = ZipCrypto.ENCRYPTION_HEADER_SIZE.toLong()
+                Long.MAX_VALUE
             } else {
                 val resolved = resolveDataDescriptorCompressedSize(ZipCrypto.ENCRYPTION_HEADER_SIZE, entryZip64)
                 resolved - ZipCrypto.ENCRYPTION_HEADER_SIZE
@@ -301,12 +320,9 @@ class ZipInputStream @JvmOverloads constructor(
                         Long.MAX_VALUE
                     }
                 } else if (legacyCipher != null) {
-                    // Compressed size includes 12-byte encryption header (already consumed)
-                    if (!hasDataDescriptor && compressedSize > 0) {
-                        compressedSize - ZipCrypto.ENCRYPTION_HEADER_SIZE
-                    } else {
-                        uncompressedSize
-                    }
+                    // Set above from the compressed size or the data descriptor, less the
+                    // 12-byte encryption header already consumed.
+                    legacyRemainingEncryptedBytes
                 } else {
                     if (hasDataDescriptor) Long.MAX_VALUE else compressedSize
                 }
@@ -493,6 +509,9 @@ class ZipInputStream @JvmOverloads constructor(
                     inflaterBuf, inflaterBufPos, inflaterBufLen - inflaterBufPos,
                     b, off, len,
                 )
+                if (entryEndsWithInflater) {
+                    aesCipher?.authenticate(checkNotNull(rawBuf), inflaterBufPos, result.bytesConsumed)
+                }
                 inflaterBufPos += result.bytesConsumed
                 entryCompressedRead += result.bytesConsumed
                 entryUncompressedRead += result.bytesProduced
@@ -581,7 +600,12 @@ class ZipInputStream @JvmOverloads constructor(
         val n = readRaw(inflaterBuf, 0, toRead)
         if (n == -1) return -1
 
-        cipher.decrypt(inflaterBuf, 0, inflaterBuf, 0, n)
+        if (entryEndsWithInflater) {
+            inflaterBuf.copyInto(rawBufFor(), 0, 0, n)
+            cipher.decryptUnauthenticated(inflaterBuf, 0, inflaterBuf, 0, n)
+        } else {
+            cipher.decrypt(inflaterBuf, 0, inflaterBuf, 0, n)
+        }
         if (aesRemainingEncryptedBytes != Long.MAX_VALUE) {
             aesRemainingEncryptedBytes -= n
         }
@@ -600,12 +624,15 @@ class ZipInputStream @JvmOverloads constructor(
 
         val n = readRaw(inflaterBuf, 0, toRead)
         if (n == -1) return -1
+        if (entryEndsWithInflater) inflaterBuf.copyInto(rawBufFor(), 0, 0, n)
         cipher.decrypt(inflaterBuf, 0, n)
         if (legacyRemainingEncryptedBytes != Long.MAX_VALUE) {
             legacyRemainingEncryptedBytes -= n
         }
         return n
     }
+
+    private fun rawBufFor(): ByteArray = rawBuf ?: ByteArray(inflaterBuf.size).also { rawBuf = it }
 
     /** Read and decrypt bytes directly into the output buffer (in place — no scratch buffer). */
     private fun readAndDecrypt(b: ByteArray, off: Int, len: Int): Int {
@@ -622,12 +649,12 @@ class ZipInputStream @JvmOverloads constructor(
 
         // Save unconsumed inflater buffer bytes to pushback
         if (inflater != null && inflaterBufPos < inflaterBufLen) {
-            // For encrypted entries, bytes are already decrypted — don't push back
+            // For encrypted entries, bytes are already decrypted — don't push back, unless
+            // the ciphertext was kept because the entry ends with its deflate stream.
             if (aesCipher == null && legacyCipher == null) {
-                val remaining = inflaterBufLen - inflaterBufPos
-                pushbackBuf = inflaterBuf.copyOfRange(inflaterBufPos, inflaterBufLen)
-                pushbackPos = 0
-                pushbackLen = remaining
+                unread(inflaterBuf.copyOfRange(inflaterBufPos, inflaterBufLen))
+            } else if (entryEndsWithInflater) {
+                unread(checkNotNull(rawBuf).copyOfRange(inflaterBufPos, inflaterBufLen))
             }
         }
 
@@ -691,13 +718,15 @@ class ZipInputStream @JvmOverloads constructor(
         val first = readExact(8)
         var compressedSize = readLeUInt(first, 0)
         var size = readLeUInt(first, 4)
-        val countsKnown = currentEntry?.method == ZipConstants.DEFLATED && !entryEncrypted
-        val narrowMatches = compressedSize == entryCompressedRead && size == entryUncompressedRead
+        // An encrypted entry's compressed size also counts its encryption overhead.
+        val countsKnown = currentEntry?.method == ZipConstants.DEFLATED && (!entryEncrypted || entryEndsWithInflater)
+        val expectedCompressed = entryCompressedRead + entryEncryptionOverhead
+        val narrowMatches = compressedSize == expectedCompressed && size == entryUncompressedRead
         if (entryZip64 || (countsKnown && !narrowMatches)) {
             val second = readExact(8)
             val wideCompressed = readLeLong(first, 0)
             val wideSize = readLeLong(second, 0)
-            val wideMatches = wideCompressed == entryCompressedRead && wideSize == entryUncompressedRead
+            val wideMatches = wideCompressed == expectedCompressed && wideSize == entryUncompressedRead
             if (countsKnown && narrowMatches && !wideMatches) {
                 // ZIP64 header but a 32-bit descriptor: the next 8 bytes are not ours.
                 unread(second)
@@ -706,7 +735,7 @@ class ZipInputStream @JvmOverloads constructor(
                 size = wideSize
             }
         }
-        if (countsKnown && (compressedSize != entryCompressedRead || size != entryUncompressedRead)) {
+        if (countsKnown && (compressedSize != expectedCompressed || size != entryUncompressedRead)) {
             throw ZipFormatException("Data descriptor sizes do not match entry data: ${currentEntry?.name}")
         }
         currentEntry?.let {
@@ -860,9 +889,7 @@ class ZipInputStream @JvmOverloads constructor(
                 ) {
                     val cs = sizeAt(buf, i + 8)
                     if (cs == prefixLen + i.toLong()) {
-                        pushbackBuf = if (size == buf.size) buf else buf.copyOf(size)
-                        pushbackPos = 0
-                        pushbackLen = size
+                        unread(if (size == buf.size) buf else buf.copyOf(size))
                         return cs
                     }
                 }
@@ -887,9 +914,7 @@ class ZipInputStream @JvmOverloads constructor(
                     val ddStart = i - ddLen
                     val cs = sizeAt(data, ddStart + 4)
                     if (cs == prefixLen + ddStart.toLong()) {
-                        pushbackBuf = data
-                        pushbackPos = 0
-                        pushbackLen = size
+                        unread(data)
                         return cs
                     }
                 }
@@ -897,9 +922,7 @@ class ZipInputStream @JvmOverloads constructor(
         }
 
         // Not found — push back data so stream isn't corrupted, then fail
-        pushbackBuf = data
-        pushbackPos = 0
-        pushbackLen = size
+        unread(data)
         throw ZipFormatException("Cannot determine compressed size for AES entry with data descriptor")
     }
 

@@ -80,6 +80,23 @@ internal class WinZipAesCipher(
      * Call this after all data has been encrypted/decrypted.
      * Also zeroes sensitive key material.
      */
+    /**
+     * Decrypts without authenticating. For a reader that only learns afterwards how many
+     * of the bytes belong to the entry; it passes those to [authenticate].
+     */
+    fun decryptUnauthenticated(
+        input: ByteArray, inputOffset: Int,
+        output: ByteArray, outputOffset: Int,
+        len: Int,
+    ) {
+        crypt(input, inputOffset, output, outputOffset, len)
+    }
+
+    /** Adds ciphertext to the authentication code; see [decryptUnauthenticated]. */
+    fun authenticate(ciphertext: ByteArray, offset: Int, len: Int) {
+        hmac.update(ciphertext, offset, len)
+    }
+
     fun getAuthCode(): ByteArray {
         val authCode = hmac.doFinal().copyOfRange(0, AUTH_CODE_LENGTH)
         // Zero sensitive state, including the retained AES key schedule inside aesEcb
