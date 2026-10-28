@@ -24,8 +24,20 @@ enum class ZipEncryption {
 private val ZipEntry.dosTime: Long
     get() = if (time == -1L) ZipConstants.DOS_EPOCH else time
 
+/** A 32-bit header value, or the ZIP64 marker when it does not fit. */
+private fun zip64Field(value: Long): Int =
+    if (value >= ZipConstants.ZIP64_MAGIC) -1 else value.toInt()
+
 /**
  * Writes ZIP entries to an output stream, with optional encryption.
+ *
+ * ZIP64 records are written only where needed: for entries or offsets of 4 GiB or
+ * more, and for archives of 65535 entries or more. Set [ZipEntry.size] before
+ * [putNextEntry] when a DEFLATED entry is known to be that large, so its local header
+ * carries ZIP64 sizes. Without it, an entry that only turns out to be that large gets
+ * a ZIP64 data descriptor, as java.util.zip writes it; readers that use the central
+ * directory handle that, but some streaming readers do not. Encrypted entries are
+ * buffered in memory and so are limited to 2 GiB.
  *
  * @param output the underlying output stream
  * @param password optional password for encryption (as UTF-8 bytes)
@@ -56,6 +68,7 @@ class ZipOutputStream @JvmOverloads constructor(
     private var entryUncompressedSize: Long = 0
     private var entryCompressedSize: Long = 0
     private var entryOffset: Long = 0
+    private var entryZip64 = false
     private var deflater: PlatformDeflater? = null
     private val deflateBuf = ByteArray(8192)
 
@@ -79,6 +92,7 @@ class ZipOutputStream @JvmOverloads constructor(
         val flag: Int,
         val headerMethod: Int,
         val versionNeeded: Int,
+        val zip64Local: Boolean = false,
     )
 
     fun setComment(comment: String?) {
@@ -108,12 +122,21 @@ class ZipOutputStream @JvmOverloads constructor(
         require(method == ZipConstants.STORED || method == ZipConstants.DEFLATED) {
             "Unsupported compression method: $method"
         }
+        // The extra field length is 16 bits. Check before any data is written, with room
+        // for the fields added later: ZIP64 in the central directory, AES at closeEntry.
+        val reserved = ZIP64_CD_EXTRA_MAX_SIZE +
+            if (password != null && encryption == ZipEncryption.AES) AesExtraField.TOTAL_SIZE else 0
+        val userExtraSize = stripZip64Extra(entry.extra)?.size ?: 0
+        require(userExtraSize <= MAX_EXTRA_SIZE - reserved) {
+            "Extra field too long: $userExtraSize bytes, at most ${MAX_EXTRA_SIZE - reserved} allowed"
+        }
         entry.method = method
 
         entryOffset = bytesWritten
         entryCrc = PlatformCrc32()
         entryUncompressedSize = 0
         entryCompressedSize = 0
+        entryZip64 = false
 
         val isEncrypted = password != null
 
@@ -146,6 +169,9 @@ class ZipOutputStream @JvmOverloads constructor(
                     if (entry.size == -1L || entry.crc == -1L) {
                         throw IllegalArgumentException("STORED entry requires size and crc to be set")
                     }
+                    // Stored data is its own compressed form. An unset compressed size
+                    // would otherwise reach the header as -1, the ZIP64 marker.
+                    if (entry.compressedSize == -1L) entry.compressedSize = entry.size
                     0
                 }
                 ZipConstants.DEFLATED -> {
@@ -155,23 +181,36 @@ class ZipOutputStream @JvmOverloads constructor(
                 else -> throw IllegalArgumentException("Unsupported compression method: $method")
             }
 
-            writeLocalFileHeader(entry, method, flag, ZipConstants.VERSION_DEFAULT)
+            entryZip64 = entry.size >= ZipConstants.ZIP64_MAGIC || entry.compressedSize >= ZipConstants.ZIP64_MAGIC
+            writeLocalFileHeader(entry, method, flag, ZipConstants.VERSION_DEFAULT, entryZip64)
         }
 
         currentEntry = entry
     }
 
-    private fun writeLocalFileHeader(entry: ZipEntry, method: Int, flag: Int, version: Int) {
+    private fun writeLocalFileHeader(entry: ZipEntry, method: Int, flag: Int, version: Int, zip64: Boolean = false) {
         val nameBytes = entry.name.encodeToByteArray()
-        val extra = entry.extra
+        val hasDescriptor = flag and 0x08 != 0
+        val userExtra = stripZip64Extra(entry.extra)
+        val extra = if (zip64) {
+            // The local ZIP64 field must hold both sizes; zeros when a descriptor follows.
+            val field = if (hasDescriptor) zip64ExtraField(0, 0) else zip64ExtraField(entry.size, entry.compressedSize)
+            if (userExtra != null) field + userExtra else field
+        } else {
+            userExtra
+        }
 
         writeLeInt(ZipConstants.LOCAL_FILE_HEADER_SIGNATURE)
-        writeLeShort(version) // version needed to extract
+        writeLeShort(if (zip64) maxOf(version, ZipConstants.VERSION_ZIP64) else version) // version needed to extract
         writeLeShort(flag) // general purpose bit flag
         writeLeShort(method) // compression method
         writeLeShort((entry.dosTime and 0xFFFF).toInt()) // last mod file time
         writeLeShort(((entry.dosTime ushr 16) and 0xFFFF).toInt()) // last mod file date
-        if (flag and 0x08 != 0) {
+        if (zip64) {
+            writeLeInt(if (hasDescriptor) 0 else entry.crc.toInt()) // crc-32
+            writeLeInt(-1) // compressed size, in the ZIP64 field
+            writeLeInt(-1) // uncompressed size, in the ZIP64 field
+        } else if (hasDescriptor) {
             // Data descriptor follows, write zeros
             writeLeInt(0) // crc-32
             writeLeInt(0) // compressed size
@@ -182,7 +221,7 @@ class ZipOutputStream @JvmOverloads constructor(
             writeLeInt(entry.size.toInt()) // uncompressed size
         }
         writeLeShort(nameBytes.size) // file name length
-        writeLeShort(extra?.size ?: 0) // extra field length
+        writeLeShort(checkExtraSize(extra)) // extra field length
         writeRaw(nameBytes, 0, nameBytes.size)
         if (extra != null) {
             writeRaw(extra, 0, extra.size)
@@ -338,15 +377,25 @@ class ZipOutputStream @JvmOverloads constructor(
                 flag = flag,
                 headerMethod = entry.method,
                 versionNeeded = ZipConstants.VERSION_DEFAULT,
+                zip64Local = entryZip64,
             )
         )
 
         if (flag and 0x08 != 0) {
-            // Write data descriptor
+            // Write data descriptor, with 8-byte sizes if the header announced ZIP64
+            // or the entry outgrew 32 bits after the header was written.
+            val zip64 = entryZip64 ||
+                entryCompressedSize >= ZipConstants.ZIP64_MAGIC ||
+                entryUncompressedSize >= ZipConstants.ZIP64_MAGIC
             writeLeInt(ZipConstants.DATA_DESCRIPTOR_SIGNATURE)
             writeLeInt(crc.toInt())
-            writeLeInt(entryCompressedSize.toInt())
-            writeLeInt(entryUncompressedSize.toInt())
+            if (zip64) {
+                writeLeLong(entryCompressedSize)
+                writeLeLong(entryUncompressedSize)
+            } else {
+                writeLeInt(entryCompressedSize.toInt())
+                writeLeInt(entryUncompressedSize.toInt())
+            }
         }
     }
 
@@ -469,17 +518,40 @@ class ZipOutputStream @JvmOverloads constructor(
 
         // Write end of central directory record
         writeEndOfCentralDirectory(centralDirOffset, centralDirSize)
+        flushBuffer()
+    }
+
+    override fun flush() {
+        flushBuffer()
+        output.flush()
     }
 
     private fun writeCentralDirectoryHeader(info: EntryInfo) {
         val entry = info.entry
         val nameBytes = entry.name.encodeToByteArray()
-        val extra = entry.extra
         val commentBytes = entry.comment?.encodeToByteArray()
 
+        // The central ZIP64 field holds only the values whose 32-bit field is marked.
+        val zip64Values = ArrayList<Long>(3)
+        if (info.uncompressedSize >= ZipConstants.ZIP64_MAGIC) zip64Values.add(info.uncompressedSize)
+        if (info.compressedSize >= ZipConstants.ZIP64_MAGIC) zip64Values.add(info.compressedSize)
+        if (info.offset >= ZipConstants.ZIP64_MAGIC) zip64Values.add(info.offset)
+        val userExtra = stripZip64Extra(entry.extra)
+        val extra = if (zip64Values.isEmpty()) {
+            userExtra
+        } else {
+            val field = zip64ExtraField(*zip64Values.toLongArray())
+            if (userExtra != null) field + userExtra else field
+        }
+        val version = if (zip64Values.isNotEmpty() || info.zip64Local) {
+            maxOf(info.versionNeeded, ZipConstants.VERSION_ZIP64)
+        } else {
+            info.versionNeeded
+        }
+
         writeLeInt(ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE)
-        writeLeShort(info.versionNeeded) // version made by
-        writeLeShort(info.versionNeeded) // version needed to extract
+        writeLeShort(version) // version made by
+        writeLeShort(version) // version needed to extract
         writeLeShort(info.flag) // general purpose bit flag
         writeLeShort(info.headerMethod) // compression method
         writeLeShort((entry.dosTime and 0xFFFF).toInt()) // last mod file time
@@ -489,15 +561,15 @@ class ZipOutputStream @JvmOverloads constructor(
         } else {
             info.crc.toInt()
         })
-        writeLeInt(info.compressedSize.toInt()) // compressed size
-        writeLeInt(info.uncompressedSize.toInt()) // uncompressed size
+        writeLeInt(zip64Field(info.compressedSize)) // compressed size
+        writeLeInt(zip64Field(info.uncompressedSize)) // uncompressed size
         writeLeShort(nameBytes.size) // file name length
-        writeLeShort(extra?.size ?: 0) // extra field length
+        writeLeShort(checkExtraSize(extra)) // extra field length
         writeLeShort(commentBytes?.size ?: 0) // file comment length
         writeLeShort(0) // disk number start
         writeLeShort(0) // internal file attributes
         writeLeInt(0) // external file attributes
-        writeLeInt(info.offset.toInt()) // relative offset of local header
+        writeLeInt(zip64Field(info.offset)) // relative offset of local header
         writeRaw(nameBytes, 0, nameBytes.size)
         if (extra != null) {
             writeRaw(extra, 0, extra.size)
@@ -509,14 +581,37 @@ class ZipOutputStream @JvmOverloads constructor(
 
     private fun writeEndOfCentralDirectory(centralDirOffset: Long, centralDirSize: Long) {
         val commentBytes = comment?.encodeToByteArray()
+        val count = entries.size
+
+        if (count >= ZipConstants.ZIP64_MAGIC_COUNT ||
+            centralDirSize >= ZipConstants.ZIP64_MAGIC ||
+            centralDirOffset >= ZipConstants.ZIP64_MAGIC
+        ) {
+            val recordOffset = bytesWritten
+            writeLeInt(ZipConstants.ZIP64_END_OF_CENTRAL_DIR_SIGNATURE)
+            writeLeLong(44) // size of the rest of this record
+            writeLeShort(ZipConstants.VERSION_ZIP64) // version made by
+            writeLeShort(ZipConstants.VERSION_ZIP64) // version needed to extract
+            writeLeInt(0) // number of this disk
+            writeLeInt(0) // disk where central directory starts
+            writeLeLong(count.toLong()) // number of central directory records on this disk
+            writeLeLong(count.toLong()) // total number of central directory records
+            writeLeLong(centralDirSize) // size of central directory
+            writeLeLong(centralDirOffset) // offset of start of central directory
+
+            writeLeInt(ZipConstants.ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE)
+            writeLeInt(0) // disk with the ZIP64 end of central directory record
+            writeLeLong(recordOffset) // offset of the ZIP64 end of central directory record
+            writeLeInt(1) // total number of disks
+        }
 
         writeLeInt(ZipConstants.END_OF_CENTRAL_DIR_SIGNATURE)
         writeLeShort(0) // number of this disk
         writeLeShort(0) // disk where central directory starts
-        writeLeShort(entries.size) // number of central directory records on this disk
-        writeLeShort(entries.size) // total number of central directory records
-        writeLeInt(centralDirSize.toInt()) // size of central directory
-        writeLeInt(centralDirOffset.toInt()) // offset of start of central directory
+        writeLeShort(minOf(count, ZipConstants.ZIP64_MAGIC_COUNT)) // number of central directory records on this disk
+        writeLeShort(minOf(count, ZipConstants.ZIP64_MAGIC_COUNT)) // total number of central directory records
+        writeLeInt(zip64Field(centralDirSize)) // size of central directory
+        writeLeInt(zip64Field(centralDirOffset)) // offset of start of central directory
         writeLeShort(commentBytes?.size ?: 0) // comment length
         if (commentBytes != null) {
             writeRaw(commentBytes, 0, commentBytes.size)
@@ -533,29 +628,67 @@ class ZipOutputStream @JvmOverloads constructor(
         }
     }
 
+    // Backstop for an extra field changed after putNextEntry validated it.
+    private fun checkExtraSize(extra: ByteArray?): Int {
+        val size = extra?.size ?: 0
+        check(size <= MAX_EXTRA_SIZE) { "Extra field too long: $size bytes" }
+        return size
+    }
+
+    private companion object {
+        const val MAX_EXTRA_SIZE = 0xFFFF
+
+        /** Central ZIP64 field with uncompressed size, compressed size and offset. */
+        const val ZIP64_CD_EXTRA_MAX_SIZE = 4 + 3 * 8
+    }
+
     // -- Low-level writing helpers --
 
+    // Headers are written a field at a time; collect them, and small data writes, so
+    // the underlying stream sees few large writes instead of many 2- and 4-byte ones.
+    private val outBuf = ByteArray(8192)
+    private var outLen = 0
+
+    private fun flushBuffer() {
+        if (outLen > 0) {
+            output.write(outBuf, 0, outLen)
+            outLen = 0
+        }
+    }
+
     private fun writeRaw(b: ByteArray, off: Int, len: Int) {
-        output.write(b, off, len)
+        if (len > outBuf.size - outLen) {
+            flushBuffer()
+            if (len >= outBuf.size) {
+                output.write(b, off, len)
+                bytesWritten += len
+                return
+            }
+        }
+        b.copyInto(outBuf, outLen, off, off + len)
+        outLen += len
         bytesWritten += len
     }
 
+    private fun writeByte(v: Int) {
+        if (outLen == outBuf.size) flushBuffer()
+        outBuf[outLen++] = v.toByte()
+        bytesWritten++
+    }
+
     private fun writeLeShort(v: Int) {
-        val buf = byteArrayOf(
-            (v and 0xFF).toByte(),
-            ((v ushr 8) and 0xFF).toByte(),
-        )
-        writeRaw(buf, 0, 2)
+        writeByte(v)
+        writeByte(v ushr 8)
     }
 
     private fun writeLeInt(v: Int) {
-        val buf = byteArrayOf(
-            (v and 0xFF).toByte(),
-            ((v ushr 8) and 0xFF).toByte(),
-            ((v ushr 16) and 0xFF).toByte(),
-            ((v ushr 24) and 0xFF).toByte(),
-        )
-        writeRaw(buf, 0, 4)
+        writeLeShort(v)
+        writeLeShort(v ushr 16)
+    }
+
+    private fun writeLeLong(v: Long) {
+        writeLeInt(v.toInt())
+        writeLeInt((v ushr 32).toInt())
     }
 }
 

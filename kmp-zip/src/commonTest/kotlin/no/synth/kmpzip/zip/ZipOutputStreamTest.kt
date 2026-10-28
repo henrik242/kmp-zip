@@ -30,6 +30,16 @@ class ZipOutputStreamTest {
     }
 
     @Test
+    fun flushPassesBufferedBytesThrough() {
+        val baos = ByteArrayOutputStream()
+        val zos = ZipOutputStream(baos)
+        zos.putNextEntry(ZipEntry("a.txt"))
+        assertEquals(0, baos.size())
+        zos.flush()
+        assertEquals(ZipConstants.LOCAL_FILE_HEADER_SIGNATURE.toLong(), readLeUInt(baos.toByteArray(), 0))
+    }
+
+    @Test
     fun singleDeflatedEntry() {
         val content = "Hello, World!"
         val data = createZip { zos ->

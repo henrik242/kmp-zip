@@ -34,8 +34,8 @@ import no.synth.kmpzip.io.SeekableSourceInputStream
  * In a browser (wasmJs) there is no synchronous file access — back it with
  * [ByteArraySeekableSource] (or `ZipFile(bytes, …)`) instead.
  *
- * **Not supported:** ZIP64 archives (entries or directories that require 64-bit
- * offsets/sizes). Opening one throws.
+ * ZIP64 archives (entries or offsets past 4 GiB, more than 65535 entries) are
+ * supported. Split/spanned archives are not; opening one throws.
  *
  * **Decompression-bomb safety.** As with [ZipInputStream], per-entry uncompressed
  * size is not capped — check [ZipEntry.size] before reading, or read against a budget.
@@ -107,25 +107,38 @@ class ZipFile @JvmOverloads constructor(
 
         // EOCD fixed fields: this-disk @4, cd-start-disk @6, total-records @10,
         // cd-size @12, cd-offset @16, comment-length @20.
-        val diskNumber = readLeShort(eocd.bytes, eocd.offset + 4)
-        val cdStartDisk = readLeShort(eocd.bytes, eocd.offset + 6)
-        val totalEntries = readLeShort(eocd.bytes, eocd.offset + 10)
-        val cdSize = readLeUInt(eocd.bytes, eocd.offset + 12)
-        val cdOffset = readLeUInt(eocd.bytes, eocd.offset + 16)
+        var diskNumber = readLeShort(eocd.bytes, eocd.offset + 4).toLong()
+        var cdStartDisk = readLeShort(eocd.bytes, eocd.offset + 6).toLong()
+        var totalEntries = readLeShort(eocd.bytes, eocd.offset + 10).toLong()
+        var cdSize = readLeUInt(eocd.bytes, eocd.offset + 12)
+        var cdOffset = readLeUInt(eocd.bytes, eocd.offset + 16)
 
-        if (cdOffset == 0xFFFFFFFFL || cdSize == 0xFFFFFFFFL || totalEntries == 0xFFFF) {
-            throw ZipUnsupportedFeatureException("ZIP64 archives are not supported")
+        val zip64 = readZip64EndOfCentralDirectory(eocd.position)
+        if (zip64 != null) {
+            diskNumber = zip64.diskNumber
+            cdStartDisk = zip64.cdStartDisk
+            totalEntries = zip64.totalEntries
+            cdSize = zip64.cdSize
+            cdOffset = zip64.cdOffset
+        } else if (cdOffset == ZipConstants.ZIP64_MAGIC || cdSize == ZipConstants.ZIP64_MAGIC) {
+            // A 0xFFFF entry count alone can be literal (exactly 65535 entries).
+            throw ZipFormatException("ZIP64 end-of-central-directory locator not found")
         }
-        if (diskNumber != 0 || cdStartDisk != 0) {
+        if (diskNumber != 0L || cdStartDisk != 0L) {
             throw ZipUnsupportedFeatureException("Split/spanned ZIP archives are not supported")
         }
-        if (cdOffset + cdSize > sourceSize) {
+        // Written so that huge ZIP64 values cannot overflow the sum.
+        if (cdOffset > sourceSize - cdSize) {
             throw ZipFormatException("Central directory extends past end of archive")
+        }
+        if (cdSize > Int.MAX_VALUE) {
+            throw ZipUnsupportedFeatureException("Central directory larger than 2 GiB is not supported")
         }
 
         val cd = readFully(cdOffset, cdSize.toInt())
 
-        val result = ArrayList<CdEntry>(totalEntries)
+        // The declared count is untrusted; never reserve more than the directory can hold.
+        val result = ArrayList<CdEntry>(minOf(totalEntries, (cd.size / CD_FIXED_LEN).toLong()).toInt())
         var p = 0
         while (p + 4 <= cd.size && readLeUInt(cd, p) == CENTRAL_DIR_HEADER_SIG) {
             if (p + CD_FIXED_LEN > cd.size) throw ZipFormatException("Truncated central directory header")
@@ -134,12 +147,13 @@ class ZipFile @JvmOverloads constructor(
             val time = readLeShort(cd, p + 12)
             val date = readLeShort(cd, p + 14)
             val crc = readLeUInt(cd, p + 16)
-            val compressedSize = readLeUInt(cd, p + 20)
-            val uncompressedSize = readLeUInt(cd, p + 24)
+            var compressedSize = readLeUInt(cd, p + 20)
+            var uncompressedSize = readLeUInt(cd, p + 24)
             val nameLen = readLeShort(cd, p + 28)
             val extraLen = readLeShort(cd, p + 30)
             val commentLen = readLeShort(cd, p + 32)
-            val localHeaderOffset = readLeUInt(cd, p + 42)
+            var diskStart = readLeShort(cd, p + 34).toLong()
+            var localHeaderOffset = readLeUInt(cd, p + 42)
 
             val nameStart = p + CD_FIXED_LEN
             val extraStart = nameStart + nameLen
@@ -147,14 +161,24 @@ class ZipFile @JvmOverloads constructor(
             val nextStart = commentStart + commentLen
             if (nextStart > cd.size) throw ZipFormatException("Truncated central directory header")
 
-            if (localHeaderOffset == 0xFFFFFFFFL || compressedSize == 0xFFFFFFFFL ||
-                uncompressedSize == 0xFFFFFFFFL
-            ) {
-                throw ZipUnsupportedFeatureException("ZIP64 archives are not supported")
-            }
-
             val name = cd.decodeToString(nameStart, extraStart)
             val extra = if (extraLen > 0) cd.copyOfRange(extraStart, commentStart) else null
+
+            val uMarked = uncompressedSize == ZipConstants.ZIP64_MAGIC
+            val cMarked = compressedSize == ZipConstants.ZIP64_MAGIC
+            val offsetMarked = localHeaderOffset == ZipConstants.ZIP64_MAGIC
+            val diskMarked = diskStart == ZipConstants.ZIP64_MAGIC_COUNT.toLong()
+            if (uMarked || cMarked || offsetMarked || diskMarked) {
+                val zip64Extra = Zip64Extra.find(extra)
+                    ?: throw ZipFormatException("Missing ZIP64 extra field for entry: $name")
+                uncompressedSize = zip64Extra.next(uncompressedSize, uMarked)
+                compressedSize = zip64Extra.next(compressedSize, cMarked)
+                localHeaderOffset = zip64Extra.next(localHeaderOffset, offsetMarked)
+                diskStart = zip64Extra.nextInt(diskStart, diskMarked)
+            }
+            if (diskStart != 0L) {
+                throw ZipUnsupportedFeatureException("Split/spanned ZIP archives are not supported")
+            }
             val comment = if (commentLen > 0) cd.decodeToString(commentStart, nextStart) else null
 
             val dosTime = (date.toLong() shl 16) or time.toLong()
@@ -195,7 +219,53 @@ class ZipFile @JvmOverloads constructor(
         return result
     }
 
-    private class Eocd(val bytes: ByteArray, val offset: Int)
+    private class Eocd(val bytes: ByteArray, val offset: Int, val position: Long)
+
+    private class Zip64Eocd(
+        val diskNumber: Long,
+        val cdStartDisk: Long,
+        val totalEntries: Long,
+        val cdSize: Long,
+        val cdOffset: Long,
+    )
+
+    /**
+     * Reads the ZIP64 end-of-central-directory record through the locator that sits
+     * immediately before the EOCD at [eocdPosition]. Returns null when there is none.
+     */
+    private fun readZip64EndOfCentralDirectory(eocdPosition: Long): Zip64Eocd? {
+        val locatorPosition = eocdPosition - ZIP64_LOCATOR_LEN
+        if (locatorPosition < 0) return null
+        val locator = readFully(locatorPosition, ZIP64_LOCATOR_LEN)
+        if (readLeUInt(locator, 0) != ZIP64_LOCATOR_SIG) return null
+
+        val recordDisk = readLeUInt(locator, 4)
+        val recordPosition = readLeLong(locator, 8)
+        val totalDisks = readLeUInt(locator, 16)
+        if (recordDisk != 0L || totalDisks > 1) {
+            throw ZipUnsupportedFeatureException("Split/spanned ZIP archives are not supported")
+        }
+        if (recordPosition < 0 || recordPosition > locatorPosition - ZIP64_EOCD_MIN_LEN) {
+            throw ZipFormatException("ZIP64 end-of-central-directory record out of range")
+        }
+        val record = readFully(recordPosition, ZIP64_EOCD_MIN_LEN)
+        if (readLeUInt(record, 0) != ZIP64_EOCD_SIG) {
+            throw ZipFormatException("ZIP64 end-of-central-directory record not found")
+        }
+        val values = longArrayOf(
+            readLeLong(record, 32), // total entries
+            readLeLong(record, 40), // central directory size
+            readLeLong(record, 48), // central directory offset
+        )
+        if (values.any { it < 0 }) throw ZipFormatException("ZIP64 end-of-central-directory value out of range")
+        return Zip64Eocd(
+            diskNumber = readLeUInt(record, 16),
+            cdStartDisk = readLeUInt(record, 20),
+            totalEntries = values[0],
+            cdSize = values[1],
+            cdOffset = values[2],
+        )
+    }
 
     private fun findEndOfCentralDirectory(sourceSize: Long): Eocd {
         if (sourceSize < EOCD_MIN_LEN) throw ZipFormatException("Not a ZIP file: too small")
@@ -211,7 +281,7 @@ class ZipFile @JvmOverloads constructor(
                 // Validate the comment length lands exactly at end of file.
                 val commentLen = readLeShort(tail, i + 20)
                 if (i + EOCD_MIN_LEN + commentLen == tail.size) {
-                    return Eocd(tail, i)
+                    return Eocd(tail, i, tailStart + i)
                 }
             }
         }
@@ -240,12 +310,20 @@ class ZipFile @JvmOverloads constructor(
         // readLeUInt yields a Long; compare against the unsigned signatures as Longs.
         val CENTRAL_DIR_HEADER_SIG = ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE.toLong()
         val END_OF_CENTRAL_DIR_SIG = ZipConstants.END_OF_CENTRAL_DIR_SIGNATURE.toLong()
+        val ZIP64_EOCD_SIG = ZipConstants.ZIP64_END_OF_CENTRAL_DIR_SIGNATURE.toLong()
+        val ZIP64_LOCATOR_SIG = ZipConstants.ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE.toLong()
 
         /** Fixed-size portion of a central directory header (before name/extra/comment). */
         const val CD_FIXED_LEN = 46
 
         /** Fixed-size portion of an end-of-central-directory record (before comment). */
         const val EOCD_MIN_LEN = 22
+
+        /** ZIP64 end-of-central-directory locator. */
+        const val ZIP64_LOCATOR_LEN = 20
+
+        /** Fixed-size portion of a ZIP64 end-of-central-directory record. */
+        const val ZIP64_EOCD_MIN_LEN = 56
     }
 }
 

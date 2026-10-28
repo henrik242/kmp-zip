@@ -11,3 +11,7 @@ internal fun readLeUInt(data: ByteArray, offset: Int): Long =
         (((data[offset + 1].toInt() and 0xFF).toLong()) shl 8) or
         (((data[offset + 2].toInt() and 0xFF).toLong()) shl 16) or
         (((data[offset + 3].toInt() and 0xFF).toLong()) shl 24)
+
+/** Reads a 64-bit little-endian value from [data] at [offset]. */
+internal fun readLeLong(data: ByteArray, offset: Int): Long =
+    readLeUInt(data, offset) or (readLeUInt(data, offset + 4) shl 32)

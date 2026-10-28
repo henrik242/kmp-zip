@@ -35,4 +35,8 @@ actual object TestData {
     actual val legacyDeflatedZip: ByteArray get() = loadResource("legacy-deflated.zip")
     actual val legacyBinaryZip: ByteArray get() = loadResource("legacy-binary.zip")
     actual val legacyMultiZip: ByteArray get() = loadResource("legacy-multi.zip")
+
+    // ZIP64 test ZIPs
+    actual val infozipZip64Zip: ByteArray get() = loadResource("infozip-zip64.zip")
+    actual val pythonZip64DdZip: ByteArray get() = loadResource("python-zip64-dd.zip")
 }
