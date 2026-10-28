@@ -37,8 +37,13 @@ private fun zip64Field(value: Long): Int =
  * [putNextEntry] when a DEFLATED entry is known to be that large, so its local header
  * carries ZIP64 sizes. Without it, an entry that only turns out to be that large gets
  * a ZIP64 data descriptor, as java.util.zip writes it; readers that use the central
- * directory handle that, but some streaming readers do not. Encrypted entries are
- * buffered in memory and so are limited to 2 GiB.
+ * directory handle that, but some streaming readers do not.
+ *
+ * Entries are written as they come, encrypted ones included. A STORED entry carries its
+ * sizes in the local header ([ZipEntry.size] and [ZipEntry.crc] must be set, except that
+ * an encrypted STORED entry may leave them unset, and an AE-2 one needs only the size).
+ * Any other entry is followed by a data descriptor. [ZipEntry.size], [ZipEntry.crc] and
+ * [ZipEntry.compressedSize] are set from the written data when the entry is closed.
  *
  * @param output the underlying output stream
  * @param password optional password for encryption (as UTF-8 bytes)
@@ -73,16 +78,20 @@ class ZipOutputStream @JvmOverloads constructor(
     private var deflater: PlatformDeflater? = null
     private val deflateBuf = ByteArray(8192)
 
-    // AES encryption state
+    // Encryption state for the current entry
     private var aesCipher: WinZipAesCipher? = null
-    private var aesSalt: ByteArray? = null
-
-    // Buffering state — used by AES and legacy DEFLATED entries that buffer compressed data
-    private var bufferedMethod: Int = -1 // actual compression method (STORED/DEFLATED) for buffered entries
-    private var compressedBuffer: MutableList<ByteArray>? = null
-
-    // Legacy (ZipCrypto) encryption state
     private var legacyCipher: ZipCrypto? = null
+    private val cryptBuf = ByteArray(8192)
+
+    // How the current entry is framed, decided by putNextEntry
+    private var entryFlag = 0
+    private var entryHeaderMethod = 0
+    private var entryVersion = ZipConstants.VERSION_DEFAULT
+    // Encryption bytes around the data (AES salt, check value and auth code, or the
+    // ZipCrypto header), counted in the compressed size.
+    private var entryOverhead = 0L
+    // Sizes in the local header and no data descriptor; only a STORED entry knows them.
+    private var entrySizesInHeader = false
 
     private class EntryInfo(
         val entry: ZipEntry,
@@ -139,63 +148,70 @@ class ZipOutputStream @JvmOverloads constructor(
         entryCompressedSize = 0
         entryZip64 = false
 
-        val isEncrypted = password != null
+        val aes = password != null && encryption == ZipEncryption.AES
+        val legacy = password != null && encryption == ZipEncryption.LEGACY
+        if (method == ZipConstants.STORED && password == null && (entry.size == -1L || entry.crc == -1L)) {
+            throw IllegalArgumentException("STORED entry requires size and crc to be set")
+        }
+        // AE-2 stores no CRC, so an AES entry only needs its size to be known up front.
+        entrySizesInHeader = method == ZipConstants.STORED && entry.size >= 0 &&
+            (entry.crc >= 0 || (aes && aesVersion == 2))
+        entryOverhead = when {
+            aes -> aesStrength.saltLength.toLong() + 2 + WinZipAesCipher.AUTH_CODE_LENGTH
+            legacy -> ZipCrypto.ENCRYPTION_HEADER_SIZE.toLong()
+            else -> 0L
+        }
+        entryHeaderMethod = if (aes) ZipConstants.AE_ENCRYPTED else method
+        entryVersion = if (aes) ZipConstants.VERSION_AES else ZipConstants.VERSION_DEFAULT
+        entryFlag = (if (password != null) 0x01 else 0) or (if (entrySizesInHeader) 0 else 0x08)
 
-        if (isEncrypted && encryption == ZipEncryption.AES) {
-            // AES encrypted entry: buffer compressed data so we know size for header
-            bufferedMethod = method
+        if (aes) {
+            val aesExtra = AesExtraField.create(version = aesVersion, strength = aesStrength, actualCompressionMethod = method)
+            val userExtra = stripExtraField(entry.extra, AesExtraField.HEADER_ID)
+            entry.extra = if (userExtra != null) userExtra + aesExtra else aesExtra
+        }
+        if (method == ZipConstants.DEFLATED) {
+            deflater = PlatformDeflater().also { it.init(level) }
+        }
+
+        val compressedSize = if (entrySizesInHeader) entry.size + entryOverhead else 0L
+        val headerCrc = if (!entrySizesInHeader || (aes && aesVersion == 2)) 0L else entry.crc
+        entryZip64 = entry.size >= ZipConstants.ZIP64_MAGIC || compressedSize >= ZipConstants.ZIP64_MAGIC
+        writeLocalFileHeader(entry, entryHeaderMethod, entryFlag, entryVersion, entryZip64, headerCrc, compressedSize, entry.size)
+
+        if (aes) {
             val salt = secureRandomBytes(aesStrength.saltLength)
-            aesSalt = salt
-            val cipher = WinZipAesCipher(password, salt, aesStrength)
+            val cipher = WinZipAesCipher(checkNotNull(password), salt, aesStrength)
+            writeRaw(salt, 0, salt.size)
+            writeRaw(cipher.passwordVerification, 0, 2)
             aesCipher = cipher
-            compressedBuffer = mutableListOf()
-
-            if (method == ZipConstants.DEFLATED) {
-                deflater = PlatformDeflater().also { it.init(level) }
+        } else if (legacy) {
+            val cipher = ZipCrypto(checkNotNull(password))
+            // The check byte is the CRC's high byte, or with a data descriptor the high
+            // byte of the DOS time, since the CRC is not known yet (APPNOTE 6.1.6).
+            val checkByte = if (entrySizesInHeader) {
+                ((entry.crc ushr 24) and 0xFF).toInt()
+            } else {
+                ((entry.dosTime ushr 8) and 0xFF).toInt()
             }
-
-            // Don't write header yet — we'll write everything at closeEntry()
-        } else if (isEncrypted && encryption == ZipEncryption.LEGACY) {
-            // Legacy (ZipCrypto) encrypted entry — buffer (deflated or raw) so
-            // the header can be written after the CRC and final sizes are known.
-            if (method == ZipConstants.DEFLATED) {
-                deflater = PlatformDeflater().also { it.init(level) }
-            }
-            compressedBuffer = mutableListOf()
-            bufferedMethod = method
-        } else {
-            // Non-encrypted: write header immediately, streaming mode
-            val flag = when (method) {
-                ZipConstants.STORED -> {
-                    if (entry.size == -1L || entry.crc == -1L) {
-                        throw IllegalArgumentException("STORED entry requires size and crc to be set")
-                    }
-                    // Stored data is its own compressed form. An unset compressed size
-                    // would otherwise reach the header as -1, the ZIP64 marker.
-                    if (entry.compressedSize == -1L) entry.compressedSize = entry.size
-                    0
-                }
-                ZipConstants.DEFLATED -> {
-                    deflater = PlatformDeflater().also { it.init(level) }
-                    0x08 // data descriptor flag
-                }
-                else -> throw IllegalArgumentException("Unsupported compression method: $method")
-            }
-
-            entryZip64 = entry.size >= ZipConstants.ZIP64_MAGIC || entry.compressedSize >= ZipConstants.ZIP64_MAGIC
-            writeLocalFileHeader(entry, method, flag, ZipConstants.VERSION_DEFAULT, entryZip64)
+            val header = ZipCrypto.createEncryptionHeader(cipher, checkByte)
+            writeRaw(header, 0, header.size)
+            legacyCipher = cipher
         }
 
         currentEntry = entry
     }
 
-    private fun writeLocalFileHeader(entry: ZipEntry, method: Int, flag: Int, version: Int, zip64: Boolean = false) {
+    private fun writeLocalFileHeader(
+        entry: ZipEntry, method: Int, flag: Int, version: Int, zip64: Boolean,
+        crc: Long, compressedSize: Long, size: Long,
+    ) {
         val nameBytes = entry.name.encodeToByteArray()
         val hasDescriptor = flag and 0x08 != 0
         val userExtra = stripZip64Extra(entry.extra)
         val extra = if (zip64) {
             // The local ZIP64 field must hold both sizes; zeros when a descriptor follows.
-            val field = if (hasDescriptor) zip64ExtraField(0, 0) else zip64ExtraField(entry.size, entry.compressedSize)
+            val field = if (hasDescriptor) zip64ExtraField(0, 0) else zip64ExtraField(size, compressedSize)
             if (userExtra != null) field + userExtra else field
         } else {
             userExtra
@@ -208,7 +224,7 @@ class ZipOutputStream @JvmOverloads constructor(
         writeLeShort((entry.dosTime and 0xFFFF).toInt()) // last mod file time
         writeLeShort(((entry.dosTime ushr 16) and 0xFFFF).toInt()) // last mod file date
         if (zip64) {
-            writeLeInt(if (hasDescriptor) 0 else entry.crc.toInt()) // crc-32
+            writeLeInt(crc.toInt()) // crc-32
             writeLeInt(-1) // compressed size, in the ZIP64 field
             writeLeInt(-1) // uncompressed size, in the ZIP64 field
         } else if (hasDescriptor) {
@@ -217,9 +233,9 @@ class ZipOutputStream @JvmOverloads constructor(
             writeLeInt(0) // compressed size
             writeLeInt(0) // uncompressed size
         } else {
-            writeLeInt(entry.crc.toInt()) // crc-32
-            writeLeInt(entry.compressedSize.toInt()) // compressed size
-            writeLeInt(entry.size.toInt()) // uncompressed size
+            writeLeInt(crc.toInt()) // crc-32
+            writeLeInt(compressedSize.toInt()) // compressed size
+            writeLeInt(size.toInt()) // uncompressed size
         }
         writeLeShort(nameBytes.size) // file name length
         writeLeShort(checkExtraSize(extra)) // extra field length
@@ -243,8 +259,7 @@ class ZipOutputStream @JvmOverloads constructor(
         entryCrc.update(b, off, len)
         entryUncompressedSize += len
 
-        val method = if (aesCipher != null) bufferedMethod else entry.method
-        when (method) {
+        when (entry.method) {
             ZipConstants.STORED -> {
                 emitCompressed(b, off, len)
                 entryCompressedSize += len
@@ -257,8 +272,11 @@ class ZipOutputStream @JvmOverloads constructor(
         val def = deflater ?: return
         var inputOffset = off
         var remaining = len
+        var drained = false
 
-        while (remaining > 0) {
+        // Once the input is used up, keep drawing while output fills the buffer: pako
+        // holds what it has produced until it is drawn, and the entry is streamed.
+        while (remaining > 0 || !drained) {
             val result = def.deflate(
                 b, inputOffset, remaining,
                 deflateBuf, 0, deflateBuf.size,
@@ -270,8 +288,9 @@ class ZipOutputStream @JvmOverloads constructor(
                 emitCompressed(deflateBuf, 0, result.bytesProduced)
                 entryCompressedSize += result.bytesProduced
             }
+            drained = result.bytesProduced < deflateBuf.size
             // Neither side advanced, so another pass would do the same thing forever.
-            if (result.bytesConsumed == 0 && result.bytesProduced == 0) {
+            if (remaining > 0 && result.bytesConsumed == 0 && result.bytesProduced == 0) {
                 throw NoProgressException("Deflater made no progress on entry: ${currentEntry?.name}")
             }
         }
@@ -279,206 +298,93 @@ class ZipOutputStream @JvmOverloads constructor(
 
     fun closeEntry() {
         val entry = currentEntry ?: return
-
-        if (aesCipher != null) {
-            closeEncryptedEntry(entry)
-        } else if (compressedBuffer != null && legacyCipher == null && password != null && encryption == ZipEncryption.LEGACY) {
-            closeLegacyBufferedEntry(entry)
-        } else {
-            closeNonEncryptedEntry(entry)
-        }
-
-        deflater?.end()
-        deflater = null
-        currentEntry = null
-    }
-
-    /** Finish deflation (if needed) and collect all buffered data. */
-    private fun finishAndCollectBufferedData(): ByteArray {
-        if (bufferedMethod == ZipConstants.DEFLATED) {
-            finishDeflate()
-        }
-        val data = collectBufferedData()
-        compressedBuffer = null
-        return data
-    }
-
-    private fun closeLegacyBufferedEntry(entry: ZipEntry) {
-        val compressedData = finishAndCollectBufferedData()
-        val crc = entryCrc.getValue()
-
-        // Initialize cipher with CRC check byte for verification
-        val cipher = ZipCrypto(checkNotNull(password))
-        val checkByte = ((crc ushr 24) and 0xFF).toInt()
-        val encHeader = ZipCrypto.createEncryptionHeader(cipher, checkByte)
-
-        // Encrypt the compressed data
-        val encryptedData = compressedData.copyOf()
-        cipher.encrypt(encryptedData, 0, encryptedData.size)
-
-        val totalCompressedSize = (ZipCrypto.ENCRYPTION_HEADER_SIZE + encryptedData.size).toLong()
-
-        // Write local header with known sizes
-        entry.crc = crc
-        entry.compressedSize = totalCompressedSize
-        entry.size = entryUncompressedSize
-        val flag = 0x01 // encrypted, no data descriptor
-        writeLocalFileHeader(entry, entry.method, flag, ZipConstants.VERSION_DEFAULT)
-
-        // Write encryption header + encrypted data
-        writeRaw(encHeader, 0, encHeader.size)
-        writeRaw(encryptedData, 0, encryptedData.size)
-
-        entries.add(
-            EntryInfo(
-                entry = entry,
-                offset = entryOffset,
-                crc = crc,
-                compressedSize = totalCompressedSize,
-                uncompressedSize = entryUncompressedSize,
-                flag = flag,
-                headerMethod = entry.method,
-                versionNeeded = ZipConstants.VERSION_DEFAULT,
-            )
-        )
-    }
-
-    /** Emit compressed bytes: buffer for AES/legacy-DEFLATED, encrypt-and-write for legacy-STORED, or write directly. */
-    private fun emitCompressed(b: ByteArray, off: Int, len: Int) {
-        val buf = compressedBuffer
-        val cipher = legacyCipher
-        if (buf != null) {
-            buf.add(b.copyOfRange(off, off + len))
-        } else if (cipher != null) {
-            val encrypted = b.copyOfRange(off, off + len)
-            cipher.encrypt(encrypted, 0, encrypted.size)
-            writeRaw(encrypted, 0, encrypted.size)
-        } else {
-            writeRaw(b, off, len)
-        }
-    }
-
-    private fun closeNonEncryptedEntry(entry: ZipEntry) {
-        if (entry.method == ZipConstants.DEFLATED) {
-            finishDeflate()
-        }
-
-        val crc = entryCrc.getValue()
-        val isLegacy = legacyCipher != null
-        legacyCipher = null
-        val encryptFlag = if (isLegacy) 0x01 else 0
-        val flag = encryptFlag or (if (entry.method == ZipConstants.DEFLATED) 0x08 else 0)
-
-        entries.add(
-            EntryInfo(
-                entry = entry,
-                offset = entryOffset,
-                crc = crc,
-                compressedSize = entryCompressedSize,
-                uncompressedSize = entryUncompressedSize,
-                flag = flag,
-                headerMethod = entry.method,
-                versionNeeded = ZipConstants.VERSION_DEFAULT,
-                zip64Local = entryZip64,
-            )
-        )
-
-        if (flag and 0x08 != 0) {
-            // Write data descriptor, with 8-byte sizes if the header announced ZIP64
-            // or the entry outgrew 32 bits after the header was written.
-            val zip64 = entryZip64 ||
-                entryCompressedSize >= ZipConstants.ZIP64_MAGIC ||
-                entryUncompressedSize >= ZipConstants.ZIP64_MAGIC
-            writeLeInt(ZipConstants.DATA_DESCRIPTOR_SIGNATURE)
-            writeLeInt(crc.toInt())
-            if (zip64) {
-                writeLeLong(entryCompressedSize)
-                writeLeLong(entryUncompressedSize)
-            } else {
-                writeLeInt(entryCompressedSize.toInt())
-                writeLeInt(entryUncompressedSize.toInt())
+        // A failed entry is dropped, so close() can still finish the archive.
+        try {
+            if (entry.method == ZipConstants.DEFLATED) finishDeflate()
+            val crc = entryCrc.getValue()
+            aesCipher?.let { cipher ->
+                val authCode = cipher.getAuthCode()
+                writeRaw(authCode, 0, authCode.size)
             }
-        }
-    }
+            val compressedSize = entryCompressedSize + entryOverhead
 
-    private fun closeEncryptedEntry(entry: ZipEntry) {
-        val cipher = checkNotNull(aesCipher)
-        val salt = checkNotNull(aesSalt)
+            if (entrySizesInHeader) {
+                // The local header already claims these, so a mismatch would corrupt the archive.
+                check(entryUncompressedSize == entry.size) {
+                    "Entry ${entry.name}: wrote $entryUncompressedSize bytes, but size was set to ${entry.size}"
+                }
+                // AE-2 does not write the CRC, and readers report its absence as 0, so an AES
+            // entry copied from another archive must not be held to it.
+            val crcWritten = !(aesCipher != null && aesVersion == 2)
+            check(!crcWritten || entry.crc < 0 || crc == entry.crc) { "Entry ${entry.name}: CRC does not match the crc set" }
+            } else {
+                // AE-2 leaves the CRC out; the auth code covers integrity.
+                val descriptorCrc = if (aesCipher != null && aesVersion == 2) 0L else crc
+                writeDataDescriptor(descriptorCrc, compressedSize, entryUncompressedSize)
+            }
 
-        val compressedData = finishAndCollectBufferedData()
-        val crc = entryCrc.getValue()
-
-        // Encrypt the compressed data
-        val encryptedData = ByteArray(compressedData.size)
-        cipher.encrypt(compressedData, 0, encryptedData, 0, compressedData.size)
-        val authCode = cipher.getAuthCode()
-
-        // Total compressed size in the header includes salt + pvv + encrypted data + auth code
-        val totalCompressedSize = salt.size.toLong() + 2 + encryptedData.size.toLong() +
-            WinZipAesCipher.AUTH_CODE_LENGTH
-
-        // Create the AES extra field
-        val aesExtra = AesExtraField.create(
-            version = aesVersion,
-            strength = aesStrength,
-            actualCompressionMethod = bufferedMethod,
-        )
-
-        // Merge AES extra field with any existing extra data
-        val existingExtra = entry.extra
-        val mergedExtra = if (existingExtra != null) {
-            existingExtra + aesExtra
-        } else {
-            aesExtra
-        }
-        entry.extra = mergedExtra
-
-        // Set entry metadata for the header
-        val headerCrc = if (aesVersion == 1) crc else 0L
-        entry.crc = headerCrc
-        entry.compressedSize = totalCompressedSize
-        entry.size = entryUncompressedSize
-
-        val flag = 0x01 // encrypted flag
-        val headerMethod = ZipConstants.AE_ENCRYPTED
-
-        // Now write the local file header
-        writeLocalFileHeader(entry, headerMethod, flag, ZipConstants.VERSION_AES)
-
-        // Write salt, password verification, encrypted data, auth code
-        writeRaw(salt, 0, salt.size)
-        writeRaw(cipher.passwordVerification, 0, 2)
-        writeRaw(encryptedData, 0, encryptedData.size)
-        writeRaw(authCode, 0, authCode.size)
-
-        entries.add(
-            EntryInfo(
-                entry = entry,
-                offset = entryOffset,
-                crc = crc, // real CRC for central directory (always stored)
-                compressedSize = totalCompressedSize,
-                uncompressedSize = entryUncompressedSize,
-                flag = flag,
-                headerMethod = headerMethod,
-                versionNeeded = ZipConstants.VERSION_AES,
+            entries.add(
+                EntryInfo(
+                    entry = entry,
+                    offset = entryOffset,
+                    crc = crc,
+                    compressedSize = compressedSize,
+                    uncompressedSize = entryUncompressedSize,
+                    flag = entryFlag,
+                    headerMethod = entryHeaderMethod,
+                    versionNeeded = entryVersion,
+                    zip64Local = entryZip64,
+                )
             )
-        )
-
-        aesCipher = null
-        aesSalt = null
+            entry.size = entryUncompressedSize
+            entry.compressedSize = compressedSize
+            entry.crc = crc
+        } finally {
+            deflater?.end()
+            deflater = null
+            aesCipher = null
+            legacyCipher = null
+            currentEntry = null
+        }
     }
 
-    private fun collectBufferedData(): ByteArray {
-        val buffer = compressedBuffer ?: return ByteArray(0)
-        var totalSize = 0
-        for (chunk in buffer) totalSize += chunk.size
-        val result = ByteArray(totalSize)
-        var offset = 0
-        for (chunk in buffer) {
-            chunk.copyInto(result, offset)
-            offset += chunk.size
+    // Uses 8-byte sizes if the header announced ZIP64 or the entry outgrew 32 bits after
+    // the header was written.
+    private fun writeDataDescriptor(crc: Long, compressedSize: Long, size: Long) {
+        val zip64 = entryZip64 || compressedSize >= ZipConstants.ZIP64_MAGIC || size >= ZipConstants.ZIP64_MAGIC
+        writeLeInt(ZipConstants.DATA_DESCRIPTOR_SIGNATURE)
+        writeLeInt(crc.toInt())
+        if (zip64) {
+            writeLeLong(compressedSize)
+            writeLeLong(size)
+        } else {
+            writeLeInt(compressedSize.toInt())
+            writeLeInt(size.toInt())
         }
-        return result
+    }
+
+    /** Writes compressed bytes, encrypting them first if the entry is encrypted. */
+    private fun emitCompressed(b: ByteArray, off: Int, len: Int) {
+        val aes = aesCipher
+        val legacy = legacyCipher
+        if (aes == null && legacy == null) {
+            writeRaw(b, off, len)
+            return
+        }
+        var pos = off
+        var left = len
+        while (left > 0) {
+            val n = minOf(left, cryptBuf.size)
+            if (aes != null) {
+                aes.encrypt(b, pos, cryptBuf, 0, n)
+            } else if (legacy != null) {
+                b.copyInto(cryptBuf, 0, pos, pos + n)
+                legacy.encrypt(cryptBuf, 0, n)
+            }
+            writeRaw(cryptBuf, 0, n)
+            pos += n
+            left -= n
+        }
     }
 
     private fun finishDeflate() {

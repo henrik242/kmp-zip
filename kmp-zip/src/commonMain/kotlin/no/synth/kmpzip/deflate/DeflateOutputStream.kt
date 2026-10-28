@@ -44,13 +44,17 @@ class DeflateOutputStream @JvmOverloads constructor(
 
         var inputOffset = off
         var remaining = len
-        while (remaining > 0) {
+        var drained = false
+        // Once the input is used up, keep drawing while output fills the buffer: pako
+        // holds what it has produced until it is drawn.
+        while (remaining > 0 || !drained) {
             val result = deflater.deflate(b, inputOffset, remaining, buf, 0, buf.size)
             inputOffset += result.bytesConsumed
             remaining -= result.bytesConsumed
             if (result.bytesProduced > 0) output.write(buf, 0, result.bytesProduced)
+            drained = result.bytesProduced < buf.size
             // Neither side advanced, so another pass would do the same thing forever.
-            if (result.bytesConsumed == 0 && result.bytesProduced == 0) {
+            if (remaining > 0 && result.bytesConsumed == 0 && result.bytesProduced == 0) {
                 throw NoProgressException("Deflater made no progress")
             }
         }
