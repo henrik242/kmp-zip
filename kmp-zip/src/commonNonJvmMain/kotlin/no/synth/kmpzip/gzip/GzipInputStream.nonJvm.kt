@@ -2,6 +2,7 @@ package no.synth.kmpzip.gzip
 
 import no.synth.kmpzip.io.InputStream
 import no.synth.kmpzip.io.NoProgressException
+import no.synth.kmpzip.io.checkBounds
 import no.synth.kmpzip.zip.CodecException
 import no.synth.kmpzip.zip.PlatformInflater
 
@@ -52,8 +53,9 @@ actual class GzipInputStream actual constructor(private val input: InputStream) 
     }
 
     actual override fun read(b: ByteArray, off: Int, len: Int): Int {
-        if (closed || eof) return -1
+        checkBounds(b, off, len)
         if (len == 0) return 0
+        if (closed || eof) return -1
 
         while (true) {
             // Always call inflate, even with no fresh input. The inflater may

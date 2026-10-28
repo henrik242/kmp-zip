@@ -1,6 +1,7 @@
 package no.synth.kmpzip.gzip
 
 import no.synth.kmpzip.io.OutputStream
+import no.synth.kmpzip.io.checkBounds
 import no.synth.kmpzip.zip.PlatformDeflater
 
 actual class GzipOutputStream actual constructor(private val output: OutputStream) : OutputStream() {
@@ -15,6 +16,7 @@ actual class GzipOutputStream actual constructor(private val output: OutputStrea
     }
 
     actual override fun write(b: ByteArray, off: Int, len: Int) {
+        checkBounds(b, off, len)
         if (closed) throw IllegalStateException("Stream closed")
         if (len == 0) return
 

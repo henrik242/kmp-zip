@@ -1,6 +1,7 @@
 package no.synth.kmpzip.gzip
 
 import no.synth.kmpzip.io.InputStream
+import no.synth.kmpzip.io.checkBounds
 
 actual class GzipInputStream actual constructor(input: InputStream) : InputStream() {
     // java.util.zip signals a bad header, corrupt trailer, or truncation with
@@ -33,7 +34,13 @@ actual class GzipInputStream actual constructor(input: InputStream) : InputStrea
 
     actual override fun read(): Int = mapFormatErrors { jvmGis.read() }
 
-    actual override fun read(b: ByteArray, off: Int, len: Int): Int = mapFormatErrors { jvmGis.read(b, off, len) }
+    // GZIPInputStream returns -1 for a zero-length read once at end of stream; the
+    // InputStream contract (and the other targets) return 0.
+    actual override fun read(b: ByteArray, off: Int, len: Int): Int {
+        checkBounds(b, off, len)
+        if (len == 0) return 0
+        return mapFormatErrors { jvmGis.read(b, off, len) }
+    }
 
     private inline fun <T> mapFormatErrors(block: () -> T): T = try {
         block()

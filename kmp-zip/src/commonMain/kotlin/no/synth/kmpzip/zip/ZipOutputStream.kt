@@ -8,6 +8,7 @@ import no.synth.kmpzip.crypto.ZipCrypto
 import no.synth.kmpzip.crypto.secureRandomBytes
 import no.synth.kmpzip.io.NoProgressException
 import no.synth.kmpzip.io.OutputStream
+import no.synth.kmpzip.io.checkBounds
 
 /**
  * Encryption method for ZIP output.
@@ -234,6 +235,7 @@ class ZipOutputStream @JvmOverloads constructor(
     }
 
     override fun write(b: ByteArray, off: Int, len: Int) {
+        checkBounds(b, off, len)
         if (closed) throw IllegalStateException("Stream closed")
         val entry = currentEntry ?: throw IllegalStateException("No current entry")
         if (len == 0) return

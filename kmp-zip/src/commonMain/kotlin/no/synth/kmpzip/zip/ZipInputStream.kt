@@ -8,6 +8,7 @@ import no.synth.kmpzip.crypto.WinZipAesCipher
 import no.synth.kmpzip.crypto.ZipCrypto
 import no.synth.kmpzip.io.InputStream
 import no.synth.kmpzip.io.NoProgressException
+import no.synth.kmpzip.io.checkBounds
 
 // AesExtraField.parse delegates to AesStrength.fromExtraFieldValue, which throws
 // IllegalArgumentException for a strength byte outside 1..3. Remap it so malformed AES
@@ -418,11 +419,13 @@ class ZipInputStream @JvmOverloads constructor(
     }
 
     override fun read(b: ByteArray, off: Int, len: Int): Int {
+        // A zero-length read reads nothing, even at the end of an entry: it must not mark
+        // the entry as started, and must not reach the inflater, which would see no
+        // output space and no progress.
+        checkBounds(b, off, len)
+        if (len == 0) return 0
         val entry = currentEntry
         if (entryEof || entry == null) return -1
-        // A zero-length read reads nothing: it must not mark the entry as started, and
-        // must not reach the inflater, which would see no output space and no progress.
-        if (len == 0) return 0
         entryReadStarted = true
         return when (entry.method) {
             ZipConstants.STORED -> readStored(b, off, len)
