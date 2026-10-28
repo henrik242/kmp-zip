@@ -59,6 +59,9 @@ class ZipOutputStream @JvmOverloads constructor(
     private val aesVersion: Int = 2,
 ) : OutputStream() {
     private var closed = false
+    // Set when an entry fails after its local header was written: those bytes cannot be
+    // taken back, so the archive cannot be finished.
+    private var failed = false
     private var finished = false
     private var currentEntry: ZipEntry? = null
     private var defaultMethod = ZipConstants.DEFLATED
@@ -92,6 +95,13 @@ class ZipOutputStream @JvmOverloads constructor(
     private var entryOverhead = 0L
     // Sizes in the local header and no data descriptor; only a STORED entry knows them.
     private var entrySizesInHeader = false
+    // What the local header claims, kept apart from the caller's mutable ZipEntry; a CRC
+    // of -1 is not checked (unset, or not written for AE-2).
+    private var entryDeclaredSize = -1L
+    private var entryDeclaredCrc = -1L
+    // The generated AES field, kept out of entry.extra so a caller replacing that cannot
+    // drop it from the central header.
+    private var entryAesExtra: ByteArray? = null
 
     private class EntryInfo(
         val entry: ZipEntry,
@@ -103,6 +113,7 @@ class ZipOutputStream @JvmOverloads constructor(
         val headerMethod: Int,
         val versionNeeded: Int,
         val zip64Local: Boolean = false,
+        val aesExtra: ByteArray? = null,
     )
 
     fun setComment(comment: String?) {
@@ -125,6 +136,7 @@ class ZipOutputStream @JvmOverloads constructor(
 
     fun putNextEntry(entry: ZipEntry) {
         if (closed) throw IllegalStateException("Stream closed")
+        check(!failed) { "An earlier entry failed; the archive cannot be continued" }
         if (currentEntry != null) closeEntry()
 
         val method = if (entry.method == -1) defaultMethod else entry.method
@@ -172,10 +184,10 @@ class ZipOutputStream @JvmOverloads constructor(
         entryVersion = if (aes) ZipConstants.VERSION_AES else ZipConstants.VERSION_DEFAULT
         entryFlag = (if (password != null) 0x01 else 0) or (if (entrySizesInHeader) 0 else 0x08)
 
-        if (aes) {
-            val aesExtra = AesExtraField.create(version = aesVersion, strength = aesStrength, actualCompressionMethod = method)
-            val userExtra = stripExtraField(entry.extra, AesExtraField.HEADER_ID)
-            entry.extra = if (userExtra != null) userExtra + aesExtra else aesExtra
+        entryAesExtra = if (aes) {
+            AesExtraField.create(version = aesVersion, strength = aesStrength, actualCompressionMethod = method)
+        } else {
+            null
         }
         if (method == ZipConstants.DEFLATED) {
             deflater = PlatformDeflater().also { it.init(level) }
@@ -183,6 +195,9 @@ class ZipOutputStream @JvmOverloads constructor(
 
         val compressedSize = if (entrySizesInHeader) entry.size + entryOverhead else 0L
         val headerCrc = if (!entrySizesInHeader || (aes && aesVersion == 2)) 0L else entry.crc
+        entryDeclaredSize = entry.size
+        // ZipCrypto's check byte is taken from the CRC too, so it must match as well.
+        entryDeclaredCrc = if (entrySizesInHeader && !(aes && aesVersion == 2)) entry.crc else -1L
         entryZip64 = entry.size >= ZipConstants.ZIP64_MAGIC || compressedSize >= ZipConstants.ZIP64_MAGIC
         writeLocalFileHeader(entry, entryHeaderMethod, entryFlag, entryVersion, entryZip64, headerCrc, compressedSize, entry.size)
 
@@ -215,7 +230,7 @@ class ZipOutputStream @JvmOverloads constructor(
     ) {
         val nameBytes = entry.name.encodeToByteArray()
         val hasDescriptor = flag and 0x08 != 0
-        val userExtra = stripZip64Extra(entry.extra)
+        val userExtra = headerExtra(entry, entryAesExtra)
         val extra = if (zip64) {
             // The local ZIP64 field must hold both sizes; zeros when a descriptor follows.
             val field = if (hasDescriptor) zip64ExtraField(0, 0) else zip64ExtraField(size, compressedSize)
@@ -317,13 +332,12 @@ class ZipOutputStream @JvmOverloads constructor(
 
             if (entrySizesInHeader) {
                 // The local header already claims these, so a mismatch would corrupt the archive.
-                check(entryUncompressedSize == entry.size) {
-                    "Entry ${entry.name}: wrote $entryUncompressedSize bytes, but size was set to ${entry.size}"
+                check(entryUncompressedSize == entryDeclaredSize) {
+                    "Entry ${entry.name}: wrote $entryUncompressedSize bytes, but size was set to $entryDeclaredSize"
                 }
                 // AE-2 does not write the CRC, and readers report its absence as 0, so an AES
-            // entry copied from another archive must not be held to it.
-            val crcWritten = !(aesCipher != null && aesVersion == 2)
-            check(!crcWritten || entry.crc < 0 || crc == entry.crc) { "Entry ${entry.name}: CRC does not match the crc set" }
+                // entry copied from another archive is not held to it.
+                check(entryDeclaredCrc < 0 || crc == entryDeclaredCrc) { "Entry ${entry.name}: CRC does not match the crc set" }
             } else {
                 // AE-2 leaves the CRC out; the auth code covers integrity.
                 val descriptorCrc = if (aesCipher != null && aesVersion == 2) 0L else crc
@@ -341,11 +355,15 @@ class ZipOutputStream @JvmOverloads constructor(
                     headerMethod = entryHeaderMethod,
                     versionNeeded = entryVersion,
                     zip64Local = entryZip64,
+                    aesExtra = entryAesExtra,
                 )
             )
             entry.size = entryUncompressedSize
             entry.compressedSize = compressedSize
             entry.crc = crc
+        } catch (e: Throwable) {
+            failed = true
+            throw e
         } finally {
             deflater?.end()
             deflater = null
@@ -419,6 +437,7 @@ class ZipOutputStream @JvmOverloads constructor(
     fun finish() {
         if (finished) return
         if (closed) throw IllegalStateException("Stream closed")
+        check(!failed) { "An earlier entry failed; the archive cannot be finished" }
         if (currentEntry != null) closeEntry()
         finished = true
 
@@ -453,7 +472,7 @@ class ZipOutputStream @JvmOverloads constructor(
         if (info.uncompressedSize >= ZipConstants.ZIP64_MAGIC) zip64Values.add(info.uncompressedSize)
         if (info.compressedSize >= ZipConstants.ZIP64_MAGIC) zip64Values.add(info.compressedSize)
         if (info.offset >= ZipConstants.ZIP64_MAGIC) zip64Values.add(info.offset)
-        val userExtra = stripZip64Extra(entry.extra)
+        val userExtra = headerExtra(entry, info.aesExtra)
         val extra = if (zip64Values.isEmpty()) {
             userExtra
         } else {
@@ -537,11 +556,29 @@ class ZipOutputStream @JvmOverloads constructor(
 
     override fun close() {
         if (!closed) {
-            if (!finished) finish()
-            closed = true
-            deflater?.end()
-            deflater = null
-            output.close()
+            // After a failed entry, close the output without a central directory, so the
+            // result cannot pass for a complete archive.
+            try {
+                if (!finished && !failed) finish()
+            } finally {
+                closed = true
+                deflater?.end()
+                deflater = null
+                output.close()
+            }
+        }
+    }
+
+    /**
+     * The caller's extra fields without the ones this writer generates (ZIP64, and AES,
+     * which may be stale from an entry read elsewhere), followed by [aesExtra].
+     */
+    private fun headerExtra(entry: ZipEntry, aesExtra: ByteArray?): ByteArray? {
+        val user = stripExtraField(stripZip64Extra(entry.extra), AesExtraField.HEADER_ID)
+        return when {
+            aesExtra == null -> user
+            user == null -> aesExtra
+            else -> user + aesExtra
         }
     }
 

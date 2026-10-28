@@ -8,10 +8,11 @@ on:
     branches: [main]
   pull_request:
 
-# Superseded PR runs are cancelled; every main push runs to completion, since the
-# Performance workflow takes its binaries from successful main runs.
+# Superseded PR runs are cancelled. Each main push gets its own group, since a group
+# keeps only one pending run, and the Performance workflow takes its binaries from
+# successful main runs.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-push-{0}', github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

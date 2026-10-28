@@ -250,6 +250,7 @@ class ZipInputStream @JvmOverloads constructor(
                 throw ZipPasswordException("Wrong password for entry: $name")
             }
             aesCipher = cipher
+            entryEncryptionOverhead = aesField.strength.saltLength.toLong() + 2 + WinZipAesCipher.AUTH_CODE_LENGTH
 
             // Encrypted data size = compressedSize - salt - pvv - authCode
             if (compressedSize > 0) {
@@ -258,7 +259,6 @@ class ZipInputStream @JvmOverloads constructor(
             } else if (aesField.actualCompressionMethod == ZipConstants.DEFLATED) {
                 aesRemainingEncryptedBytes = Long.MAX_VALUE
                 entryEndsWithInflater = true
-                entryEncryptionOverhead = aesField.strength.saltLength.toLong() + 2 + WinZipAesCipher.AUTH_CODE_LENGTH
             } else {
                 // Data descriptor entry with unknown size: scan ahead to find the
                 // data descriptor and determine the actual compressed size.
@@ -286,6 +286,7 @@ class ZipInputStream @JvmOverloads constructor(
             }
 
             legacyCipher = cipher
+            entryEncryptionOverhead = ZipCrypto.ENCRYPTION_HEADER_SIZE.toLong()
 
             // Track remaining encrypted data bytes (compressedSize includes the 12-byte header).
             // Use compressedSize when available, even if data descriptor flag is set (some tools
@@ -294,7 +295,6 @@ class ZipInputStream @JvmOverloads constructor(
                 compressedSize - ZipCrypto.ENCRYPTION_HEADER_SIZE
             } else if (method == ZipConstants.DEFLATED) {
                 entryEndsWithInflater = true
-                entryEncryptionOverhead = ZipCrypto.ENCRYPTION_HEADER_SIZE.toLong()
                 Long.MAX_VALUE
             } else {
                 val resolved = resolveDataDescriptorCompressedSize(ZipCrypto.ENCRYPTION_HEADER_SIZE, entryZip64)
@@ -713,14 +713,9 @@ class ZipInputStream @JvmOverloads constructor(
         val first = readExact(8)
         var compressedSize = readLeUInt(first, 0)
         var size = readLeUInt(first, 4)
-        // Stored data is its own compressed form, so its counts are the bytes read. An
-        // encrypted entry's are known when it ends with its deflate stream, and its
-        // compressed size also counts its encryption overhead.
-        val countsKnown = when (currentEntry?.method) {
-            ZipConstants.DEFLATED -> !entryEncrypted || entryEndsWithInflater
-            ZipConstants.STORED -> !entryEncrypted
-            else -> false
-        }
+        // The bytes read are the entry's sizes: stored data is its own compressed form, and
+        // an encrypted entry's compressed size also counts its encryption overhead.
+        val countsKnown = currentEntry?.method == ZipConstants.DEFLATED || currentEntry?.method == ZipConstants.STORED
         val expectedCompressed = entryCompressedRead + entryEncryptionOverhead
         val narrowMatches = compressedSize == expectedCompressed && size == entryUncompressedRead
         if (entryZip64 || (countsKnown && !narrowMatches)) {

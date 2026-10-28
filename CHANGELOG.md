@@ -25,8 +25,10 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
   be read by readers that use the central directory. `ZipEntry.size`, `crc` and
   `compressedSize` are set from the written data when an entry closes, and a STORED
   entry whose data does not match the `size` or `crc` it was given now fails at
-  `closeEntry` instead of writing a corrupt archive. The `crc` is not checked for AE-2,
-  which does not store it, so an AE-2 entry read from another archive can be copied.
+  `closeEntry` instead of writing a corrupt archive. Its bytes are already written, so
+  the archive cannot then be continued or finished, and `close()` closes the output
+  without a central directory. The `crc` is not checked for AE-2, which does not store
+  it, so an AE-2 entry read from another archive can be copied.
 - `ZipInputStream` reads an encrypted DEFLATED entry with a data descriptor without
   buffering it, by finding its end from the deflate stream. It used to buffer up to
   256 MiB and fail on larger entries.

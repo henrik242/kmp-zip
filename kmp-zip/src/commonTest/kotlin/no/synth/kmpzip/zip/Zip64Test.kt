@@ -212,6 +212,24 @@ class Zip64Test {
         assertFailsWith<IllegalArgumentException> { zos.putNextEntry(entry) }
     }
 
+    // An entry comment ending in a ZIP64 locator's signature and 16 zero bytes sits right
+    // before the EOCD, where a locator would be. The EOCD needs no ZIP64, so it is used.
+    @Test
+    fun strayLocatorInCommentIgnored() {
+        val comment = "\u0050\u004b\u0006\u0007" + "\u0000".repeat(16)
+        val data = createZip { zos ->
+            val entry = ZipEntry("a.txt")
+            entry.comment = comment
+            zos.putNextEntry(entry)
+            zos.write("a".encodeToByteArray())
+        }
+        assertEquals(ZipConstants.ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE.toLong(), readLeUInt(data, data.size - 42))
+        ZipFile(data).use { zip ->
+            assertEquals(comment, zip.entries.single().comment)
+            assertEquals("a", zip.getInputStream("a.txt").use { it.readBytes().decodeToString() })
+        }
+    }
+
     @Test
     fun centralDirectoryOffsetMarkerWithoutLocatorRejected() {
         val bytes = TestData.multiEntryZip.copyOf()

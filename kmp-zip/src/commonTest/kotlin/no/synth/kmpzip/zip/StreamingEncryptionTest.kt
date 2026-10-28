@@ -223,7 +223,12 @@ class StreamingEncryptionTest {
 
     @Test
     fun storedSizeMismatchRejected() {
-        val baos = ByteArrayOutputStream()
+        var closed = false
+        val baos = object : ByteArrayOutputStream() {
+            override fun close() {
+                closed = true
+            }
+        }
         val zos = ZipOutputStream(baos, password)
         val entry = ZipEntry("a.txt")
         entry.method = ZipConstants.STORED
@@ -232,13 +237,55 @@ class StreamingEncryptionTest {
         zos.write(small)
         assertFailsWith<IllegalStateException> { zos.closeEntry() }
 
-        // The failed entry is dropped from the central directory; the archive still closes.
-        zos.putNextEntry(ZipEntry("b.txt"))
-        zos.write(small)
+        // Its header and data are already out, so the archive cannot be continued or
+        // finished; close() still closes the output, without a central directory.
+        assertFailsWith<IllegalStateException> { zos.putNextEntry(ZipEntry("b.txt")) }
+        assertFailsWith<IllegalStateException> { zos.finish() }
         zos.close()
+        assertTrue(closed)
+        assertFailsWith<ZipException> { ZipFile(baos.toByteArray(), password) }
+    }
+
+    @Test
+    fun sizeChangedAfterPutIsCheckedAgainstTheHeader() {
+        val zos = ZipOutputStream(ByteArrayOutputStream(), password)
+        val entry = ZipEntry("a.txt")
+        entry.method = ZipConstants.STORED
+        entry.size = small.size * 2L
+        zos.putNextEntry(entry)
+        entry.size = small.size.toLong()
+        zos.write(small)
+        assertFailsWith<IllegalStateException> { zos.closeEntry() }
+    }
+
+    @Test
+    fun aesFieldSurvivesReplacedExtra() {
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos, password).use { zos ->
+            val entry = ZipEntry("a.txt")
+            zos.putNextEntry(entry)
+            entry.extra = byteArrayOf(0x34, 0x12, 0, 0) // an unrelated, empty field
+            zos.write(big)
+        }
         ZipFile(baos.toByteArray(), password).use { zip ->
-            assertEquals(listOf("b.txt"), zip.entries.map { it.name })
-            assertContentEquals(small, zip.getInputStream("b.txt").use { it.readBytes() })
+            assertEquals(ZipConstants.DEFLATED, zip.entries.single().method)
+            assertContentEquals(big, zip.getInputStream("a.txt").use { it.readBytes() })
+        }
+    }
+
+    // ZipFile passes the central directory's size, so the entry is read with a known size;
+    // its data descriptor must still match what was read.
+    @Test
+    fun tamperedDescriptorRejectedWhenSizeIsKnown() {
+        for (encryption in ZipEncryption.entries) {
+            val data = write(Spec("deflated", encryption, ZipConstants.DEFLATED), "a.txt" to big)
+            // One entry, no ZIP64: the descriptor's last field (uncompressed size) ends
+            // where the central directory starts.
+            val cd = readLeUInt(data, data.size - 6).toInt()
+            data[cd - 4] = (data[cd - 4] + 1).toByte()
+            ZipFile(data, password).use { zip ->
+                assertFailsWith<ZipFormatException>("$encryption") { zip.getInputStream("a.txt").use { it.readBytes() } }
+            }
         }
     }
 
