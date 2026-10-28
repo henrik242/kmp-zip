@@ -25,6 +25,11 @@ enum class ZipEncryption {
 private val ZipEntry.dosTime: Long
     get() = if (time == -1L) ZipConstants.DOS_EPOCH else time
 
+// Names and comments are written as UTF-8; flag it when that differs from ASCII, so
+// readers do not decode them as CP437.
+private val ZipEntry.textFlag: Int
+    get() = if (needsUtf8Flag(name) || needsUtf8Flag(comment)) UTF8_FLAG else 0
+
 /** A 32-bit header value, or the ZIP64 marker when it does not fit. */
 private fun zip64Field(value: Long): Int =
     if (value >= ZipConstants.ZIP64_MAGIC) -1 else value.toInt()
@@ -203,7 +208,7 @@ class ZipOutputStream @JvmOverloads constructor(
 
         writeLeInt(ZipConstants.LOCAL_FILE_HEADER_SIGNATURE)
         writeLeShort(if (zip64) maxOf(version, ZipConstants.VERSION_ZIP64) else version) // version needed to extract
-        writeLeShort(flag) // general purpose bit flag
+        writeLeShort(flag or entry.textFlag) // general purpose bit flag
         writeLeShort(method) // compression method
         writeLeShort((entry.dosTime and 0xFFFF).toInt()) // last mod file time
         writeLeShort(((entry.dosTime ushr 16) and 0xFFFF).toInt()) // last mod file date
@@ -554,7 +559,7 @@ class ZipOutputStream @JvmOverloads constructor(
         writeLeInt(ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE)
         writeLeShort(version) // version made by
         writeLeShort(version) // version needed to extract
-        writeLeShort(info.flag) // general purpose bit flag
+        writeLeShort(info.flag or entry.textFlag) // general purpose bit flag
         writeLeShort(info.headerMethod) // compression method
         writeLeShort((entry.dosTime and 0xFFFF).toInt()) // last mod file time
         writeLeShort(((entry.dosTime ushr 16) and 0xFFFF).toInt()) // last mod file date
