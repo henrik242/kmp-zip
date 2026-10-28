@@ -98,12 +98,13 @@ class ZipFileTest {
     }
 
     @Test
-    fun zip64Rejected() {
+    fun entryCountMarkerWithoutLocatorIsLiteral() {
         val bytes = TestData.multiEntryZip.copyOf()
-        // EOCD "total entries" (offset +10) == 0xFFFF signals ZIP64.
+        // EOCD "total entries" (offset +10) == 0xFFFF with no ZIP64 locator is read as a
+        // literal 65535, which the two-entry directory cannot satisfy.
         bytes[bytes.size - 12] = 0xFF.toByte()
         bytes[bytes.size - 11] = 0xFF.toByte()
-        assertFailsWith<ZipUnsupportedFeatureException> { ZipFile(bytes) }
+        assertFailsWith<ZipFormatException> { ZipFile(bytes) }
     }
 
     @Test

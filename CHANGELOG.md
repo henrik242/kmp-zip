@@ -6,7 +6,24 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 
 ## Unreleased
 
-n/a
+### Added
+- ZIP64 support. `ZipInputStream` and `ZipFile` read ZIP64 entries, data descriptors and
+  end-of-central-directory records. `ZipOutputStream` writes them where needed: entries
+  or offsets of 4 GiB or more, and 65535 or more entries. A DEFLATED entry of unknown
+  size that turns out to need ZIP64 gets a ZIP64 data descriptor only, as java.util.zip
+  writes it; set `ZipEntry.size` up front to get ZIP64 in its local header as well.
+
+### Changed
+- `ZipOutputStream` buffers its output instead of writing each header field to the
+  underlying stream separately; `flush()` now passes buffered bytes on.
+
+### Fixed
+- A STORED entry written without `ZipEntry.compressedSize` set no longer gets
+  `0xFFFFFFFF` in its local header; the compressed size defaults to the size.
+- `ZipInputStream` rejects a data descriptor whose sizes do not match a DEFLATED entry's
+  data.
+- `ZipOutputStream.putNextEntry` rejects an extra field too long to fit the header once
+  ZIP64 and AES fields are added, instead of writing a truncated length.
 
 ## 1.0.1 - 2026-10-27
 

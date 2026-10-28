@@ -121,9 +121,9 @@ kotlin {
 |------|-------------|
 | `ZipInputStream(InputStream, password?)` | Reads ZIP entries — `nextEntry`, `closeEntry()`, `read()`, `readBytes()`. Pass a password (`ByteArray` or `String`) to decrypt encrypted entries (auto-detects AES or legacy). |
 | `ZipInputStream(ByteArray, password?)` | Convenience factory |
-| `ZipFile(SeekableSource, password?)` | Random-access reader — parses the central directory, then `getEntry(name)` / `entries` / `getInputStream(entry)` seek straight to one entry without streaming the whole archive. Decrypts AES and legacy entries like `ZipInputStream`. No ZIP64. |
+| `ZipFile(SeekableSource, password?)` | Random-access reader — parses the central directory, then `getEntry(name)` / `entries` / `getInputStream(entry)` seek straight to one entry without streaming the whole archive. Decrypts AES and legacy entries like `ZipInputStream`. Reads ZIP64. |
 | `ZipFile(ByteArray, password?)` | Convenience factory |
-| `ZipOutputStream(OutputStream, password?, encryption?, aesStrength?)` | Writes ZIP entries — `putNextEntry()`, `closeEntry()`, `write()`, `finish()`, `setMethod()`, `setLevel()`. Pass a password to encrypt all entries. |
+| `ZipOutputStream(OutputStream, password?, encryption?, aesStrength?)` | Writes ZIP entries — `putNextEntry()`, `closeEntry()`, `write()`, `finish()`, `setMethod()`, `setLevel()`. Pass a password to encrypt all entries. Writes ZIP64 records where needed (entries or offsets of 4 GiB or more, 65535+ entries); set `ZipEntry.size` up front on a DEFLATED entry known to be that large. Encrypted entries are buffered in memory, so they are limited to 2 GiB. |
 | `ZipEntry` | Entry metadata — `name`, `size`, `compressedSize`, `crc`, `method`, `isDirectory`, `time`, `comment`, `extra` |
 | `isZip(ByteArray)` | Four-byte sniff: `true` if the data starts with a local-file-header or end-of-central-directory signature. Not validation. |
 | `ZipConstants` | `STORED = 0`, `DEFLATED = 8` |
@@ -131,7 +131,7 @@ kotlin {
 | `AesStrength` | `AES_128`, `AES_192`, `AES_256` (default) |
 | `ZipException` | Base for archive failures; extends `IOException`. (Simple name collides with `java.util.zip.ZipException` on the JVM — alias one if you import both.) |
 | `ZipFormatException` | Malformed, corrupt, or truncated archive |
-| `ZipUnsupportedFeatureException` | Valid archive, unimplemented feature (ZIP64, split/spanned, unknown method) |
+| `ZipUnsupportedFeatureException` | Valid archive, unimplemented feature (split/spanned, unknown method) |
 | `ZipPasswordException` | Missing or wrong password (see [Error handling](#error-handling)) |
 
 ### `kmp-zip` — `no.synth.kmpzip.crypto`
@@ -212,7 +212,7 @@ import no.synth.kmpzip.zip.ZipUnsupportedFeatureException
 try {
     ZipInputStream(bytes, password).use { /* read entries */ }
 } catch (e: ZipPasswordException) {          // missing/wrong password
-} catch (e: ZipUnsupportedFeatureException) { // ZIP64, split/spanned
+} catch (e: ZipUnsupportedFeatureException) { // split/spanned, unknown method
 } catch (e: ZipFormatException) {            // not a ZIP, corrupt, or truncated
 } catch (e: ZipException) {                  // any other archive-level failure
 }

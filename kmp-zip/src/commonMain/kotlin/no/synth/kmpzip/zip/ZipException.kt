@@ -23,8 +23,7 @@ class ZipFormatException @JvmOverloads constructor(message: String, cause: Throw
 
 /**
  * The archive is well-formed but uses a ZIP feature this library does not
- * implement, such as ZIP64, split/spanned archives, or an unsupported compression
- * method.
+ * implement, such as split/spanned archives or an unsupported compression method.
  */
 class ZipUnsupportedFeatureException @JvmOverloads constructor(message: String, cause: Throwable? = null) : ZipException(message, cause)
 

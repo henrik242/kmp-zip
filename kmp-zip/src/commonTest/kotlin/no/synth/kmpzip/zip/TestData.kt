@@ -32,4 +32,9 @@ expect object TestData {
     val legacyDeflatedZip: ByteArray
     val legacyBinaryZip: ByteArray
     val legacyMultiZip: ByteArray
+
+    // ZIP64 test ZIPs: Info-ZIP `zip -fz` (STORED, ZIP64 end records), and Python
+    // zipfile `force_zip64` streamed (DEFLATED, ZIP64 data descriptor)
+    val infozipZip64Zip: ByteArray
+    val pythonZip64DdZip: ByteArray
 }
