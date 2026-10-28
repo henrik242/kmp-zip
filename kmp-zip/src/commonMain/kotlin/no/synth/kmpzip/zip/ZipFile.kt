@@ -143,6 +143,7 @@ class ZipFile @JvmOverloads constructor(
         while (p + 4 <= cd.size && readLeUInt(cd, p) == CENTRAL_DIR_HEADER_SIG) {
             if (p + CD_FIXED_LEN > cd.size) throw ZipFormatException("Truncated central directory header")
 
+            val utf8 = readLeShort(cd, p + 8) and UTF8_FLAG != 0
             val method = readLeShort(cd, p + 10)
             val time = readLeShort(cd, p + 12)
             val date = readLeShort(cd, p + 14)
@@ -161,7 +162,7 @@ class ZipFile @JvmOverloads constructor(
             val nextStart = commentStart + commentLen
             if (nextStart > cd.size) throw ZipFormatException("Truncated central directory header")
 
-            val name = cd.decodeToString(nameStart, extraStart)
+            val name = decodeZipText(cd, nameStart, extraStart, utf8)
             val extra = if (extraLen > 0) cd.copyOfRange(extraStart, commentStart) else null
 
             val uMarked = uncompressedSize == ZipConstants.ZIP64_MAGIC
@@ -179,7 +180,7 @@ class ZipFile @JvmOverloads constructor(
             if (diskStart != 0L) {
                 throw ZipUnsupportedFeatureException("Split/spanned ZIP archives are not supported")
             }
-            val comment = if (commentLen > 0) cd.decodeToString(commentStart, nextStart) else null
+            val comment = if (commentLen > 0) decodeZipText(cd, commentStart, nextStart, utf8) else null
 
             val dosTime = (date.toLong() shl 16) or time.toLong()
 

@@ -203,7 +203,7 @@ class ZipOutputStream @JvmOverloads constructor(
 
         writeLeInt(ZipConstants.LOCAL_FILE_HEADER_SIGNATURE)
         writeLeShort(if (zip64) maxOf(version, ZipConstants.VERSION_ZIP64) else version) // version needed to extract
-        writeLeShort(flag) // general purpose bit flag
+        writeLeShort(flag or UTF8_FLAG) // general purpose bit flag
         writeLeShort(method) // compression method
         writeLeShort((entry.dosTime and 0xFFFF).toInt()) // last mod file time
         writeLeShort(((entry.dosTime ushr 16) and 0xFFFF).toInt()) // last mod file date
@@ -554,7 +554,7 @@ class ZipOutputStream @JvmOverloads constructor(
         writeLeInt(ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE)
         writeLeShort(version) // version made by
         writeLeShort(version) // version needed to extract
-        writeLeShort(info.flag) // general purpose bit flag
+        writeLeShort(info.flag or UTF8_FLAG) // general purpose bit flag
         writeLeShort(info.headerMethod) // compression method
         writeLeShort((entry.dosTime and 0xFFFF).toInt()) // last mod file time
         writeLeShort(((entry.dosTime ushr 16) and 0xFFFF).toInt()) // last mod file date

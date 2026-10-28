@@ -22,6 +22,10 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
   underlying stream separately; `flush()` now passes buffered bytes on.
 
 ### Fixed
+- Entries now set the UTF-8 flag (general purpose bit 11), as java.util.zip does, so
+  tools that follow the spec no longer read non-ASCII names and comments as CP437. When reading, a name or
+  comment without the flag is decoded as UTF-8 if it is valid UTF-8, and as CP437
+  otherwise; before, it was always decoded as UTF-8.
 - A STORED entry written without `ZipEntry.compressedSize` set no longer gets
   `0xFFFFFFFF` in its local header; the compressed size defaults to the size.
 - `ZipInputStream` rejects a data descriptor whose sizes do not match a DEFLATED entry's

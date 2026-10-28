@@ -179,7 +179,7 @@ class ZipInputStream @JvmOverloads constructor(
         val isEncrypted = (generalFlag and 0x01) != 0
 
         val nameBytes = readExact(nameLen)
-        val name = nameBytes.decodeToString()
+        val name = decodeZipText(nameBytes, 0, nameBytes.size, generalFlag and UTF8_FLAG != 0)
 
         val extra = if (extraLen > 0) readExact(extraLen) else null
 
