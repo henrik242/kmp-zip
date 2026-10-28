@@ -49,6 +49,7 @@ class ZipFile @JvmOverloads constructor(
 ) : Closeable {
 
     private val localHeaderOffsets: Map<String, Long>
+    private val compressedSizes: Map<String, Long>
 
     /** Every entry in the archive, in central-directory order. */
     val entries: List<ZipEntry>
@@ -59,11 +60,16 @@ class ZipFile @JvmOverloads constructor(
         val parsed = readCentralDirectory()
         entries = parsed.map { it.entry }
         val offsets = LinkedHashMap<String, Long>(parsed.size)
+        val sizes = HashMap<String, Long>(parsed.size)
         for (e in parsed) {
             // First occurrence wins for duplicate names.
-            if (e.entry.name !in offsets) offsets[e.entry.name] = e.localHeaderOffset
+            if (e.entry.name !in offsets) {
+                offsets[e.entry.name] = e.localHeaderOffset
+                sizes[e.entry.name] = e.entry.compressedSize
+            }
         }
         localHeaderOffsets = offsets
+        compressedSizes = sizes
     }
 
     /** Returns the entry with the given [name], or `null` if no such entry exists. */
@@ -88,6 +94,7 @@ class ZipFile @JvmOverloads constructor(
             ?: throw IllegalArgumentException("No such entry: $name")
         val view = SeekableSourceInputStream(source, offset)
         val zis = ZipInputStream(view, password)
+        zis.nextEntryCompressedSize = compressedSizes[name] ?: -1
         zis.nextEntry ?: throw ZipFormatException("No local file header at offset $offset for entry: $name")
         return zis
     }

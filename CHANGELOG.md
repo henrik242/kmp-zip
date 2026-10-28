@@ -38,6 +38,12 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
   tools that follow the spec no longer read non-ASCII names and comments as CP437. When reading, a name or
   comment without the flag is decoded as UTF-8 if it is valid UTF-8, and as CP437
   otherwise; before, it was always decoded as UTF-8.
+- `ZipInputStream` reads STORED entries that have a data descriptor. An unencrypted one
+  used to swallow the rest of the archive, and a legacy-encrypted one without sizes in
+  its local header read as empty. `ZipFile` passes the size from the central directory,
+  so it never has to scan for the descriptor.
+- `ZipOutputStream` rejects an entry name, entry comment, or archive comment longer than
+  65535 bytes instead of writing a truncated length.
 - A STORED entry written without `ZipEntry.compressedSize` set no longer gets
   `0xFFFFFFFF` in its local header; the compressed size defaults to the size.
 - `ZipInputStream` rejects a data descriptor whose sizes do not match a DEFLATED entry's

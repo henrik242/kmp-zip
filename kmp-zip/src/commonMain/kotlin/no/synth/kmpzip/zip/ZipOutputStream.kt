@@ -106,6 +106,8 @@ class ZipOutputStream @JvmOverloads constructor(
     )
 
     fun setComment(comment: String?) {
+        val size = comment?.encodeToByteArray()?.size ?: 0
+        require(size <= MAX_FIELD_SIZE) { "ZIP comment too long: $size bytes, at most $MAX_FIELD_SIZE allowed" }
         this.comment = comment
     }
 
@@ -132,13 +134,18 @@ class ZipOutputStream @JvmOverloads constructor(
         require(method == ZipConstants.STORED || method == ZipConstants.DEFLATED) {
             "Unsupported compression method: $method"
         }
-        // The extra field length is 16 bits. Check before any data is written, with room
-        // for the fields added later: ZIP64 in the central directory, AES at closeEntry.
+        // Name, comment and extra field lengths are 16 bits. Check before any data is
+        // written, leaving room in the extra field for what is added later: ZIP64 in the
+        // central directory, AES at closeEntry.
+        val nameSize = entry.name.encodeToByteArray().size
+        require(nameSize <= MAX_FIELD_SIZE) { "Entry name too long: $nameSize bytes, at most $MAX_FIELD_SIZE allowed" }
+        val commentSize = entry.comment?.encodeToByteArray()?.size ?: 0
+        require(commentSize <= MAX_FIELD_SIZE) { "Entry comment too long: $commentSize bytes, at most $MAX_FIELD_SIZE allowed" }
         val reserved = ZIP64_CD_EXTRA_MAX_SIZE +
             if (password != null && encryption == ZipEncryption.AES) AesExtraField.TOTAL_SIZE else 0
         val userExtraSize = stripZip64Extra(entry.extra)?.size ?: 0
-        require(userExtraSize <= MAX_EXTRA_SIZE - reserved) {
-            "Extra field too long: $userExtraSize bytes, at most ${MAX_EXTRA_SIZE - reserved} allowed"
+        require(userExtraSize <= MAX_FIELD_SIZE - reserved) {
+            "Extra field too long: $userExtraSize bytes, at most ${MAX_FIELD_SIZE - reserved} allowed"
         }
         entry.method = method
 
@@ -438,6 +445,8 @@ class ZipOutputStream @JvmOverloads constructor(
         val entry = info.entry
         val nameBytes = entry.name.encodeToByteArray()
         val commentBytes = entry.comment?.encodeToByteArray()
+        // The comment can be set after putNextEntry; a too-long one must not be truncated.
+        check((commentBytes?.size ?: 0) <= MAX_FIELD_SIZE) { "Entry comment too long: ${entry.name}" }
 
         // The central ZIP64 field holds only the values whose 32-bit field is marked.
         val zip64Values = ArrayList<Long>(3)
@@ -539,12 +548,13 @@ class ZipOutputStream @JvmOverloads constructor(
     // Backstop for an extra field changed after putNextEntry validated it.
     private fun checkExtraSize(extra: ByteArray?): Int {
         val size = extra?.size ?: 0
-        check(size <= MAX_EXTRA_SIZE) { "Extra field too long: $size bytes" }
+        check(size <= MAX_FIELD_SIZE) { "Extra field too long: $size bytes" }
         return size
     }
 
     private companion object {
-        const val MAX_EXTRA_SIZE = 0xFFFF
+        /** Name, comment and extra field lengths are 16-bit header fields. */
+        const val MAX_FIELD_SIZE = 0xFFFF
 
         /** Central ZIP64 field with uncompressed size, compressed size and offset. */
         const val ZIP64_CD_EXTRA_MAX_SIZE = 4 + 3 * 8

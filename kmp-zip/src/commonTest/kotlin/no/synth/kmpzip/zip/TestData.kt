@@ -37,4 +37,11 @@ expect object TestData {
     // zipfile `force_zip64` streamed (DEFLATED, ZIP64 data descriptor)
     val infozipZip64Zip: ByteArray
     val pythonZip64DdZip: ByteArray
+
+    // Python zipfile streamed STORED entries: data descriptors, no sizes in local headers
+    val pythonStoredDdZip: ByteArray
+
+    // Python zipfile streamed: DEFLATED, STORED, a 10 KB incompressible DEFLATED, STORED;
+    // all with data descriptors
+    val pythonMixedDdZip: ByteArray
 }
