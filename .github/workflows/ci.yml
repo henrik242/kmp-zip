@@ -5,8 +5,14 @@ permissions:
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
   pull_request:
+
+# Superseded PR runs are cancelled; every main push runs to completion, since the
+# Performance workflow takes its binaries from successful main runs.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-and-test:
