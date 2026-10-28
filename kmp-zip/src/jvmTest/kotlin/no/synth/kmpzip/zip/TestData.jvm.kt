@@ -39,4 +39,6 @@ actual object TestData {
     // ZIP64 test ZIPs
     actual val infozipZip64Zip: ByteArray get() = loadResource("infozip-zip64.zip")
     actual val pythonZip64DdZip: ByteArray get() = loadResource("python-zip64-dd.zip")
+    actual val pythonStoredDdZip: ByteArray get() = loadResource("python-stored-dd.zip")
+    actual val pythonMixedDdZip: ByteArray get() = loadResource("python-mixed-dd.zip")
 }

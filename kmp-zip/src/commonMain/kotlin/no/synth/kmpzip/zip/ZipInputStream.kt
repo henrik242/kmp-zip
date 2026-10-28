@@ -104,6 +104,9 @@ class ZipInputStream @JvmOverloads constructor(
     private var entryEndsWithInflater = false
     private var rawBuf: ByteArray? = null
     private var entryEncryptionOverhead = 0L
+    // Compressed size of the next entry from the central directory, set by ZipFile so an
+    // entry with a data descriptor and no sizes in its local header is not scanned for.
+    internal var nextEntryCompressedSize: Long = -1
 
     // True when the current entry's local header has a ZIP64 extra field.
     private var entryZip64: Boolean = false
@@ -197,6 +200,8 @@ class ZipInputStream @JvmOverloads constructor(
         // directory's marked-fields-only layout for writers that store fewer.
         val zip64 = Zip64Extra.find(extra)
         entryZip64 = zip64 != null
+        val knownCompressedSize = nextEntryCompressedSize
+        nextEntryCompressedSize = -1
         if (zip64 != null) {
             val uMarked = uncompressedSize == ZipConstants.ZIP64_MAGIC
             val cMarked = compressedSize == ZipConstants.ZIP64_MAGIC
@@ -207,6 +212,13 @@ class ZipInputStream @JvmOverloads constructor(
                 uncompressedSize = zip64.next(uncompressedSize, uMarked)
                 compressedSize = zip64.next(compressedSize, cMarked)
             }
+        }
+
+        // With a data descriptor, a zero size in the local header means "unknown" unless
+        // the central directory says otherwise; then even zero is the real size.
+        val sizeKnown = !hasDataDescriptor || compressedSize > 0 || knownCompressedSize >= 0
+        if (hasDataDescriptor && compressedSize == 0L && knownCompressedSize >= 0) {
+            compressedSize = knownCompressedSize
         }
 
         val dosTime = (lastModDate.toLong() shl 16) or lastModTime.toLong()
@@ -311,20 +323,14 @@ class ZipInputStream @JvmOverloads constructor(
 
         when (effectiveMethod) {
             ZipConstants.STORED -> {
-                remainingBytes = if (aesCipher != null) {
-                    if (aesRemainingEncryptedBytes != Long.MAX_VALUE) {
-                        aesRemainingEncryptedBytes
-                    } else if (!hasDataDescriptor) {
-                        uncompressedSize
-                    } else {
-                        Long.MAX_VALUE
-                    }
-                } else if (legacyCipher != null) {
-                    // Set above from the compressed size or the data descriptor, less the
-                    // 12-byte encryption header already consumed.
-                    legacyRemainingEncryptedBytes
-                } else {
-                    if (hasDataDescriptor) Long.MAX_VALUE else compressedSize
+                // Stored data ends where its size says. A data descriptor entry without
+                // sizes in its local header has to be scanned for its end, as an encrypted
+                // one already was above.
+                remainingBytes = when {
+                    aesCipher != null -> aesRemainingEncryptedBytes
+                    legacyCipher != null -> legacyRemainingEncryptedBytes
+                    !sizeKnown -> resolveDataDescriptorCompressedSize(0, entryZip64, plainStored = true)
+                    else -> compressedSize
                 }
             }
             ZipConstants.DEFLATED -> {
@@ -451,22 +457,9 @@ class ZipInputStream @JvmOverloads constructor(
     }
 
     private fun readStored(b: ByteArray, off: Int, len: Int): Int {
-        if (remainingBytes <= 0 && !hasDataDescriptor) {
+        if (remainingBytes <= 0) {
             finishEntry()
             return -1
-        }
-
-        if (hasDataDescriptor && aesCipher == null && legacyCipher == null) {
-            val n = readRaw(b, off, len)
-            if (n == -1) {
-                finishEntry()
-                return -1
-            }
-            if (n == 0) {
-                throw NoProgressException("Source returned no data on entry: ${currentEntry?.name}")
-            }
-            entryCrc?.update(b, off, n)
-            return n
         }
 
         val toRead = minOf(len.toLong(), remainingBytes).toInt()
@@ -489,6 +482,8 @@ class ZipInputStream @JvmOverloads constructor(
         }
         legacyCipher?.decrypt(b, off, n)
         entryCrc?.update(b, off, n)
+        entryCompressedRead += n
+        entryUncompressedRead += n
         remainingBytes -= n
         if (remainingBytes <= 0) {
             finishEntry()
@@ -718,8 +713,14 @@ class ZipInputStream @JvmOverloads constructor(
         val first = readExact(8)
         var compressedSize = readLeUInt(first, 0)
         var size = readLeUInt(first, 4)
-        // An encrypted entry's compressed size also counts its encryption overhead.
-        val countsKnown = currentEntry?.method == ZipConstants.DEFLATED && (!entryEncrypted || entryEndsWithInflater)
+        // Stored data is its own compressed form, so its counts are the bytes read. An
+        // encrypted entry's are known when it ends with its deflate stream, and its
+        // compressed size also counts its encryption overhead.
+        val countsKnown = when (currentEntry?.method) {
+            ZipConstants.DEFLATED -> !entryEncrypted || entryEndsWithInflater
+            ZipConstants.STORED -> !entryEncrypted
+            else -> false
+        }
         val expectedCompressed = entryCompressedRead + entryEncryptionOverhead
         val narrowMatches = compressedSize == expectedCompressed && size == entryUncompressedRead
         if (entryZip64 || (countsKnown && !narrowMatches)) {
@@ -851,24 +852,37 @@ class ZipInputStream @JvmOverloads constructor(
      * @return the compressed size from the data descriptor
      * @throws Exception if the data descriptor cannot be found
      */
-    private fun resolveDataDescriptorCompressedSize(consumedPrefixLength: Int, zip64: Boolean): Long {
+    private fun resolveDataDescriptorCompressedSize(consumedPrefixLength: Int, zip64: Boolean, plainStored: Boolean = false): Long {
         // Read into a growing buffer, scanning for the data descriptor after each
         // chunk. This stops as soon as the descriptor is found, so for multi-entry
         // zips we only buffer the current entry's data (not subsequent entries).
         var buf = ByteArray(8192)
         var size = 0
         val prefixLen = consumedPrefixLength.toLong()
-        // Signature + CRC + compressed size, and the descriptor without its signature.
-        val sigMatchLen = if (zip64) 16 else 12
-        val ddLen = if (zip64) 20 else 12
+        val sizeLen = if (zip64) 8 else 4
+        // The descriptor without its signature: CRC and both sizes.
+        val ddLen = 4 + 2 * sizeLen
+        // A candidate is the signature, the descriptor, and the next header's signature.
+        val matchLen = 4 + ddLen + 4
         fun sizeAt(data: ByteArray, offset: Int): Long =
             if (zip64) readLeLong(data, offset) else readLeUInt(data, offset)
+
+        // The descriptor at [ddStart] fits the [dataLen] bytes before it, and a header follows.
+        // Data that happens to contain a signature rarely passes all of this.
+        fun fits(data: ByteArray, ddStart: Int, dataLen: Int): Boolean {
+            val cs = sizeAt(data, ddStart + 4)
+            if (cs != prefixLen + dataLen) return false
+            // Stored data is its own compressed form.
+            if (plainStored && sizeAt(data, ddStart + 4 + sizeLen) != cs) return false
+            val next = readLeUInt(data, ddStart + ddLen)
+            return next == LOCAL_HEADER_SIG || next == CENTRAL_HEADER_SIG
+        }
 
         while (true) {
             if (size >= buf.size) {
                 if (buf.size >= MAX_DATA_DESCRIPTOR_SCAN_BYTES) {
                     throw ZipFormatException(
-                        "AES entry with data descriptor exceeded $MAX_DATA_DESCRIPTOR_SCAN_BYTES " +
+                        "Entry with data descriptor exceeded $MAX_DATA_DESCRIPTOR_SCAN_BYTES " +
                             "bytes without a valid descriptor - possible malformed or malicious archive"
                     )
                 }
@@ -876,54 +890,45 @@ class ZipInputStream @JvmOverloads constructor(
             }
             val n = readRaw(buf, size, minOf(4096, buf.size - size))
             if (n == -1) break
+            if (n == 0) throw NoProgressException("Source returned no data while scanning for a data descriptor")
 
             // Scan newly available data, re-checking the tail for cross-chunk matches
-            val scanStart = maxOf(0, size - (sigMatchLen - 1))
+            val scanStart = maxOf(0, size - (matchLen - 1))
             size += n
 
             // Primary: scan for data descriptor signature PK\x07\x08
-            // followed by CRC (4) and compressed size (4, or 8 for ZIP64)
-            for (i in scanStart..size - sigMatchLen) {
+            for (i in scanStart..size - matchLen) {
                 if (buf[i] == 0x50.toByte() && buf[i + 1] == 0x4b.toByte() &&
-                    buf[i + 2] == 0x07.toByte() && buf[i + 3] == 0x08.toByte()
+                    buf[i + 2] == 0x07.toByte() && buf[i + 3] == 0x08.toByte() &&
+                    fits(buf, i + 4, i)
                 ) {
-                    val cs = sizeAt(buf, i + 8)
-                    if (cs == prefixLen + i.toLong()) {
-                        unread(if (size == buf.size) buf else buf.copyOf(size))
-                        return cs
-                    }
+                    unread(if (size == buf.size) buf else buf.copyOf(size))
+                    return sizeAt(buf, i + 8)
                 }
             }
         }
 
         if (size == 0) {
-            throw ZipFormatException("Unexpected end of stream in AES entry with data descriptor")
+            throw ZipFormatException("Unexpected end of stream in entry with data descriptor")
         }
 
-        // Fallback: scan all buffered data for next entry/central directory header and
-        // infer data descriptor (without signature) from the 12 bytes preceding it.
-        // Layout: [encrypted data][auth code (10)][CRC(4)|compressedSize|uncompressedSize][PK header]
+        // Fallback: the signature is optional, so look for the next header and take the
+        // descriptor from the bytes before it.
+        // Layout: [data][AES auth code (10)][CRC(4)|compressedSize|uncompressedSize][PK header]
         val data = if (size == buf.size) buf else buf.copyOf(size)
         for (i in ddLen..size - 4) {
             if (data[i] == 0x50.toByte() && data[i + 1] == 0x4b.toByte()) {
-                val sig3 = data[i + 2].toInt() and 0xFF
-                val sig4 = data[i + 3].toInt() and 0xFF
-                val isLocalHeader = sig3 == 0x03 && sig4 == 0x04
-                val isCentralDir = sig3 == 0x01 && sig4 == 0x02
-                if (isLocalHeader || isCentralDir) {
-                    val ddStart = i - ddLen
-                    val cs = sizeAt(data, ddStart + 4)
-                    if (cs == prefixLen + ddStart.toLong()) {
-                        unread(data)
-                        return cs
-                    }
+                val ddStart = i - ddLen
+                if (fits(data, ddStart, ddStart)) {
+                    unread(data)
+                    return sizeAt(data, ddStart + 4)
                 }
             }
         }
 
         // Not found — push back data so stream isn't corrupted, then fail
         unread(data)
-        throw ZipFormatException("Cannot determine compressed size for AES entry with data descriptor")
+        throw ZipFormatException("Cannot determine compressed size for entry with data descriptor")
     }
 
     companion object {
@@ -933,6 +938,10 @@ class ZipInputStream @JvmOverloads constructor(
          * legitimate single AES entries of this size are not in scope for this code path.
          */
         private const val MAX_DATA_DESCRIPTOR_SCAN_BYTES = 256 * 1024 * 1024
+
+        // readLeUInt yields a Long; compare against the unsigned signatures as Longs.
+        private val LOCAL_HEADER_SIG = ZipConstants.LOCAL_FILE_HEADER_SIGNATURE.toLong()
+        private val CENTRAL_HEADER_SIG = ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE.toLong()
 
         /** Constant-time byte array comparison to prevent timing attacks. */
         private fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {

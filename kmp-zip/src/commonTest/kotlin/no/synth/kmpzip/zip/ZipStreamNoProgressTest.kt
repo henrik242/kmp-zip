@@ -46,6 +46,16 @@ class ZipStreamNoProgressTest {
 
     /** A stall inside the local header hits readExact, which advances by the read count. */
     @Test
+    fun stalledSourceWhileScanningForDescriptorThrowsInsteadOfSpinning() {
+        // Past first.txt's local header (30 + 9 bytes), into its unsized STORED data.
+        assertFailsWith<NoProgressException> {
+            ZipInputStream(StallingInputStream(TestData.pythonStoredDdZip, 60)).use { zis ->
+                zis.nextEntry
+            }
+        }
+    }
+
+    @Test
     fun stalledSourceInLocalHeaderThrowsInsteadOfSpinning() {
         assertFailsWith<NoProgressException> {
             ZipInputStream(StallingInputStream(TestData.storedZip, 32)).use { zis ->
