@@ -1,6 +1,10 @@
 package no.synth.kmpzip.zip
 
-/** General purpose bit 11: the entry's name and comment are UTF-8 (APPNOTE 4.4.4). */
+/**
+ * General purpose bit 11: the entry's name and comment are UTF-8 (APPNOTE 4.4.4). The
+ * writer always sets it, as java.util.zip does: ASCII is valid UTF-8, and a comment set
+ * after the local header is written cannot then disagree with it.
+ */
 internal const val UTF8_FLAG = 0x0800
 
 /**
@@ -16,9 +20,6 @@ internal fun decodeZipText(bytes: ByteArray, start: Int, end: Int, utf8Flag: Boo
         decodeCp437(bytes, start, end)
     }
 }
-
-/** True if [text] needs [UTF8_FLAG]: it has characters outside ASCII. */
-internal fun needsUtf8Flag(text: String?): Boolean = text != null && text.any { it.code > 0x7F }
 
 private fun decodeCp437(bytes: ByteArray, start: Int, end: Int): String {
     val sb = StringBuilder(end - start)

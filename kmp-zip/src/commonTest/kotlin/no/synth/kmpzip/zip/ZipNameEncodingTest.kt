@@ -64,10 +64,23 @@ class ZipNameEncodingTest {
     }
 
     @Test
-    fun asciiNameLeavesFlagClear() {
+    fun asciiNameSetsUtf8FlagToo() {
         val data = createZip("plain.txt", comment = "plain")
-        assertEquals(0, localFlag(data) and UTF8_FLAG)
-        assertEquals(0, centralFlag(data) and UTF8_FLAG)
+        assertEquals(UTF8_FLAG, localFlag(data) and UTF8_FLAG)
+        assertEquals(UTF8_FLAG, centralFlag(data) and UTF8_FLAG)
+    }
+
+    @Test
+    fun commentSetAfterPutNextEntryKeepsHeadersConsistent() {
+        val baos = ByteArrayOutputStream()
+        ZipOutputStream(baos).use { zos ->
+            val entry = ZipEntry("a.txt")
+            zos.putNextEntry(entry)
+            entry.comment = "smørbrød"
+        }
+        val data = baos.toByteArray()
+        assertEquals(localFlag(data), centralFlag(data))
+        assertEquals("smørbrød", ZipFile(data).use { it.entries.single().comment })
     }
 
     @Test
@@ -85,6 +98,7 @@ class ZipNameEncodingTest {
         cp437[2] = 0x86.toByte()
         cp437[4] = 0x91.toByte()
         replaceName(data, cp437)
+        setUtf8Flag(data, on = false)
         assertEquals("blåbær.txt" to "blåbær.txt", namesRead(data))
     }
 
