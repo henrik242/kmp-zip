@@ -1,6 +1,6 @@
 # kmp-zip
 
-Kotlin Multiplatform ZIP, GZIP, and zlib/raw DEFLATE library for JVM, iOS, macOS, Linux, Windows, Kotlin/JS, and Kotlin/Wasm (wasmJs) targets, with encryption support.
+Kotlin Multiplatform ZIP, GZIP, and zlib/raw DEFLATE library for JVM, Android, iOS, macOS, Linux, Windows, Kotlin/JS, and Kotlin/Wasm (wasmJs) targets, with encryption support.
 
 Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `ZipOutputStream`, `GzipInputStream`, `GzipOutputStream`, `InflateInputStream`, and `DeflateOutputStream` with a common API across platforms. Supports reading and writing encrypted ZIP archives:
 - **WinZip AES** (AES-128/192/256, AE-1 and AE-2 formats) — strong encryption, compatible with 7-Zip, WinRAR, etc.
