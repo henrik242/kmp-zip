@@ -1,7 +1,7 @@
 package no.synth.kmpzip.io
 
 import no.synth.kmpzip.internal.Uint8Array
-import no.synth.kmpzip.zip.copyUint8ToByteArray
+import no.synth.kmpzip.internal.copyUint8ToByteArray
 
 // Node-only. A browser has no synchronous filesystem and no `node:fs` module, so
 // callers in a browser should use ByteArraySeekableSource instead. Merely

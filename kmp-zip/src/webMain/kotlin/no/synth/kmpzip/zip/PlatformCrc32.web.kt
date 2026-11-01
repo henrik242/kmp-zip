@@ -1,9 +1,7 @@
 package no.synth.kmpzip.zip
 
-// Pure-Kotlin CRC-32 (IEEE 802.3 polynomial, reflected). Used on js/wasmJs to
-// avoid crossing the JS boundary and copying ByteArray <-> Uint8Array on every
-// chunk just to reach pako's exported crc32(); for small/medium inputs the JS
-// round-trip dominates the compute.
+// Pure-Kotlin CRC-32 (IEEE 802.3 polynomial, reflected). js/wasmJs have no
+// platform zlib to delegate to.
 private val CRC32_TABLE = IntArray(256).also { table ->
     for (i in 0 until 256) {
         var c = i

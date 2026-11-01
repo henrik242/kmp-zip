@@ -10,7 +10,7 @@ import no.synth.kmpzip.zip.PlatformDeflater
  * An output stream that compresses data as raw DEFLATE or zlib.
  *
  * Uses the platform codec: `java.util.zip.Deflater` on JVM, `platform.zlib` on native,
- * pako on js/wasmJs. [flush] passes on what has been written to the underlying stream
+ * kmp-zlib on js/wasmJs. [flush] passes on what has been written to the underlying stream
  * but does not force the compressor to emit pending data; [finish] or [close] does.
  *
  * @param output the underlying output stream
@@ -45,8 +45,8 @@ class DeflateOutputStream @JvmOverloads constructor(
         var inputOffset = off
         var remaining = len
         var drained = false
-        // Once the input is used up, keep drawing while output fills the buffer: pako
-        // holds what it has produced until it is drawn.
+        // Once the input is used up, keep drawing while output fills the buffer: the
+        // codec holds what it has produced until it is drawn.
         while (remaining > 0 || !drained) {
             val result = deflater.deflate(b, inputOffset, remaining, buf, 0, buf.size)
             inputOffset += result.bytesConsumed

@@ -3,7 +3,7 @@
 package no.synth.kmpzip.crypto
 
 import no.synth.kmpzip.internal.Uint8Array
-import no.synth.kmpzip.zip.copyUint8ToByteArray
+import no.synth.kmpzip.internal.copyUint8ToByteArray
 
 // AES / HMAC / PBKDF2 actuals live in pureKotlinCryptoMain (shared with
 // linux/mingw native). Only the random-bytes source is JS-specific.

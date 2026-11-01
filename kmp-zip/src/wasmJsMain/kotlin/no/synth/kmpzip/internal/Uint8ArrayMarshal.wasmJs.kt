@@ -1,8 +1,6 @@
 @file:Suppress("UNUSED_PARAMETER")
 
-package no.synth.kmpzip.zip
-
-import no.synth.kmpzip.internal.Uint8Array
+package no.synth.kmpzip.internal
 
 // Kotlin/Wasm keeps ByteArray in linear memory, so there is no shared buffer to
 // alias: every byte has to cross the boundary. A Latin-1 String is the cheapest
@@ -13,7 +11,7 @@ import no.synth.kmpzip.internal.Uint8Array
 // String across the boundary in one copy. Cannot use `TextDecoder('latin1')`:
 // the WHATWG Encoding spec aliases the `latin1` label to **windows-1252**,
 // which remaps bytes 0x80..0x9F (e.g. 0x8B → U+2039) and breaks the
-// byte-identity round-trip the gzip magic bytes depend on. `String.fromCharCode`
+// byte-identity round-trip binary data depends on. `String.fromCharCode`
 // has no such remapping. Chunked `apply` keeps allocation linear without
 // blowing past JS engines' max-args-per-call limit on large arrays.
 private fun uint8ArrayToLatin1String(arr: Uint8Array, start: Int, length: Int): String =

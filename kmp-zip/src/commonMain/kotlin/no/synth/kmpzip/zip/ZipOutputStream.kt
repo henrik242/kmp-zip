@@ -300,8 +300,8 @@ class ZipOutputStream @JvmOverloads constructor(
         var remaining = len
         var drained = false
 
-        // Once the input is used up, keep drawing while output fills the buffer: pako
-        // holds what it has produced until it is drawn, and the entry is streamed.
+        // Once the input is used up, keep drawing while output fills the buffer: the
+        // codec holds what it has produced until it is drawn, and the entry is streamed.
         while (remaining > 0 || !drained) {
             val result = def.deflate(
                 b, inputOffset, remaining,

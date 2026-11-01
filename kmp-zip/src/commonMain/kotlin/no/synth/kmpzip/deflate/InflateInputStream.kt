@@ -12,7 +12,7 @@ import no.synth.kmpzip.zip.PlatformInflater
  * An input stream that decompresses raw DEFLATE or zlib data.
  *
  * Uses the platform codec: `java.util.zip.Inflater` on JVM, `platform.zlib` on native,
- * pako on js/wasmJs. A zlib stream's Adler-32 checksum is verified when its end is read.
+ * kmp-zlib on js/wasmJs. A zlib stream's Adler-32 checksum is verified when its end is read.
  *
  * The stream ends with the compressed data. Input is read ahead in chunks, so bytes
  * after the end of the compressed data may already have been consumed from [input].
@@ -48,7 +48,7 @@ class InflateInputStream @JvmOverloads constructor(
 
         while (true) {
             // Always call inflate, even with no fresh input: the inflater may hold output
-            // from an earlier push (the pako wrapper does), and needs calls to drain it.
+            // from an earlier call, such as a match cut short by a full buffer.
             val result = try {
                 inflater.inflate(inputBuf, inputBufPos, inputBufLen - inputBufPos, b, off, len)
             } catch (e: CodecException) {
