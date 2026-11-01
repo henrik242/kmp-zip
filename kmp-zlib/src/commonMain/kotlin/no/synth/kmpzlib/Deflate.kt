@@ -37,18 +37,22 @@ private const val FUNC_STORED = 0
 private const val FUNC_FAST = 1
 private const val FUNC_SLOW = 2
 
-private val CONFIGURATION_TABLE = arrayOf(
-    Config(0, 0, 0, 0, FUNC_STORED),
-    Config(4, 4, 8, 4, FUNC_FAST),
-    Config(4, 5, 16, 8, FUNC_FAST),
-    Config(4, 6, 32, 32, FUNC_FAST),
-    Config(4, 4, 16, 16, FUNC_SLOW),
-    Config(8, 16, 32, 32, FUNC_SLOW),
-    Config(8, 16, 128, 128, FUNC_SLOW),
-    Config(8, 32, 128, 256, FUNC_SLOW),
-    Config(32, 128, 258, 1024, FUNC_SLOW),
-    Config(32, 258, 258, 4096, FUNC_SLOW),
-)
+// In an object, not a top-level val: on js, every function in a file with top-level
+// initializers checks on entry that they have run, and insertString runs per byte.
+private object Configuration {
+    val table = arrayOf(
+        Config(0, 0, 0, 0, FUNC_STORED),
+        Config(4, 4, 8, 4, FUNC_FAST),
+        Config(4, 5, 16, 8, FUNC_FAST),
+        Config(4, 6, 32, 32, FUNC_FAST),
+        Config(4, 4, 16, 16, FUNC_SLOW),
+        Config(8, 16, 32, 32, FUNC_SLOW),
+        Config(8, 16, 128, 128, FUNC_SLOW),
+        Config(8, 32, 128, 256, FUNC_SLOW),
+        Config(32, 128, 258, 1024, FUNC_SLOW),
+        Config(32, 258, 258, 4096, FUNC_SLOW),
+    )
+}
 
 internal class DeflateState(
     val strm: ZStream,
@@ -159,7 +163,7 @@ internal fun deflateReset(s: DeflateState) {
 private fun lmInit(s: DeflateState) {
     s.windowSize = 2 * s.wSize
     s.head.fill(0)
-    val config = CONFIGURATION_TABLE[s.level]
+    val config = Configuration.table[s.level]
     s.maxLazyMatch = config.maxLazy
     s.goodMatch = config.goodLength
     s.niceMatch = config.niceLength
@@ -175,15 +179,16 @@ private fun lmInit(s: DeflateState) {
 
 private fun slideHash(s: DeflateState) {
     val wsize = s.wSize
+    // Branch-free max(m - wsize, 0): the sign mask clears negative results.
     val head = s.head
     for (p in 0 until s.hashSize) {
-        val m = head[p]
-        head[p] = if (m >= wsize) m - wsize else 0
+        val m = head[p] - wsize
+        head[p] = m and (m shr 31).inv()
     }
     val prev = s.prev
     for (p in 0 until wsize) {
-        val m = prev[p]
-        prev[p] = if (m >= wsize) m - wsize else 0
+        val m = prev[p] - wsize
+        prev[p] = m and (m shr 31).inv()
     }
 }
 
@@ -607,7 +612,7 @@ internal fun deflate(s: DeflateState, flush: Int): Int {
     if (strm.availIn != 0 || s.lookahead != 0 || (flush != Z_NO_FLUSH && s.status != FINISH_STATE)) {
         val bstate = when {
             s.level == 0 -> deflateStored(s, flush)
-            CONFIGURATION_TABLE[s.level].func == FUNC_FAST -> deflateFast(s, flush)
+            Configuration.table[s.level].func == FUNC_FAST -> deflateFast(s, flush)
             else -> deflateSlow(s, flush)
         }
 

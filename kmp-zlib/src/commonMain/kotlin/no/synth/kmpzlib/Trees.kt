@@ -21,11 +21,6 @@ private const val REP_3_6 = 16
 private const val REPZ_3_10 = 17
 private const val REPZ_11_138 = 18
 
-private val EXTRA_LBITS = intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0)
-private val EXTRA_DBITS = intArrayOf(0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13)
-private val EXTRA_BLBITS = intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7)
-private val BL_ORDER = intArrayOf(16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15)
-
 internal class StaticTreeDesc(
     val staticTree: IntArray?,
     val extraBits: IntArray,
@@ -39,6 +34,12 @@ internal class TreeDesc(val dynTree: IntArray, val statDesc: StaticTreeDesc) {
 }
 
 private object StaticTrees {
+    // Kept here rather than as top-level vals: on js, every function in a file with
+    // top-level initializers checks on entry that they have run.
+    val extraLbits = intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0)
+    val extraDbits = intArrayOf(0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13)
+    val extraBlbits = intArrayOf(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7)
+    val blOrder = intArrayOf(16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15)
     val ltree = IntArray((L_CODES + 2) * 2)
     val dtree = IntArray(D_CODES * 2)
     val distCode = IntArray(512)
@@ -54,7 +55,7 @@ private object StaticTrees {
         var code = 0
         while (code < LENGTH_CODES - 1) {
             baseLength[code] = length
-            for (n in 0 until (1 shl EXTRA_LBITS[code])) lengthCode[length++] = code
+            for (n in 0 until (1 shl extraLbits[code])) lengthCode[length++] = code
             code++
         }
         // Length 258 gets its own code (28) rather than 284 + 31 extra bits.
@@ -64,13 +65,13 @@ private object StaticTrees {
         code = 0
         while (code < 16) {
             baseDist[code] = dist
-            for (n in 0 until (1 shl EXTRA_DBITS[code])) distCode[dist++] = code
+            for (n in 0 until (1 shl extraDbits[code])) distCode[dist++] = code
             code++
         }
         dist = dist shr 7
         while (code < D_CODES) {
             baseDist[code] = dist shl 7
-            for (n in 0 until (1 shl (EXTRA_DBITS[code] - 7))) distCode[256 + dist++] = code
+            for (n in 0 until (1 shl (extraDbits[code] - 7))) distCode[256 + dist++] = code
             code++
         }
 
@@ -87,9 +88,9 @@ private object StaticTrees {
             dtree[i * 2] = biReverse(i, 5)
         }
 
-        lDesc = StaticTreeDesc(ltree, EXTRA_LBITS, LITERALS + 1, L_CODES, MAX_BITS)
-        dDesc = StaticTreeDesc(dtree, EXTRA_DBITS, 0, D_CODES, MAX_BITS)
-        blDesc = StaticTreeDesc(null, EXTRA_BLBITS, 0, BL_CODES, MAX_BL_BITS)
+        lDesc = StaticTreeDesc(ltree, extraLbits, LITERALS + 1, L_CODES, MAX_BITS)
+        dDesc = StaticTreeDesc(dtree, extraDbits, 0, D_CODES, MAX_BITS)
+        blDesc = StaticTreeDesc(null, extraBlbits, 0, BL_CODES, MAX_BL_BITS)
     }
 }
 
@@ -253,32 +254,38 @@ private fun DeflateState.pqdownheap(tree: IntArray, start: Int) {
 }
 
 private fun DeflateState.compressBlock(ltree: IntArray, dtree: IntArray) {
-    var sx = 0
-    if (symNext != 0) {
-        do {
-            var dist = pendingBuf.u8(symBuf + sx++)
-            dist += pendingBuf.u8(symBuf + sx++) shl 8
-            var lc = pendingBuf.u8(symBuf + sx++)
-            if (dist == 0) {
-                sendCode(lc, ltree)
-            } else {
-                var code = StaticTrees.lengthCode[lc]
-                sendCode(code + LITERALS + 1, ltree)
-                var extra = EXTRA_LBITS[code]
-                if (extra != 0) {
-                    lc -= StaticTrees.baseLength[code]
-                    sendBits(lc, extra)
-                }
-                dist--
-                code = dCode(dist)
-                sendCode(code, dtree)
-                extra = EXTRA_DBITS[code]
-                if (extra != 0) {
-                    dist -= StaticTrees.baseDist[code]
-                    sendBits(dist, extra)
-                }
+    val st = StaticTrees
+    val lengthCode = st.lengthCode
+    val baseLength = st.baseLength
+    val baseDist = st.baseDist
+    val extraLbits = st.extraLbits
+    val extraDbits = st.extraDbits
+    val buf = pendingBuf
+    var sx = symBuf
+    val end = symBuf + symNext
+    while (sx < end) {
+        var dist = buf.u8(sx++)
+        dist += buf.u8(sx++) shl 8
+        var lc = buf.u8(sx++)
+        if (dist == 0) {
+            sendCode(lc, ltree)
+        } else {
+            var code = lengthCode[lc]
+            sendCode(code + LITERALS + 1, ltree)
+            var extra = extraLbits[code]
+            if (extra != 0) {
+                lc -= baseLength[code]
+                sendBits(lc, extra)
             }
-        } while (sx < symNext)
+            dist--
+            code = dCode(dist)
+            sendCode(code, dtree)
+            extra = extraDbits[code]
+            if (extra != 0) {
+                dist -= baseDist[code]
+                sendBits(dist, extra)
+            }
+        }
     }
     sendCode(END_BLOCK, ltree)
 }
@@ -441,7 +448,7 @@ private fun DeflateState.buildBlTree(): Int {
 
     var maxBlindex = BL_CODES - 1
     while (maxBlindex >= 3) {
-        if (blTree[BL_ORDER[maxBlindex] * 2 + 1] != 0) break
+        if (blTree[StaticTrees.blOrder[maxBlindex] * 2 + 1] != 0) break
         maxBlindex--
     }
     optLen += 3 * (maxBlindex + 1) + 5 + 5 + 4
@@ -452,7 +459,7 @@ private fun DeflateState.sendAllTrees(lcodes: Int, dcodes: Int, blcodes: Int) {
     sendBits(lcodes - 257, 5)
     sendBits(dcodes - 1, 5)
     sendBits(blcodes - 4, 4)
-    for (rank in 0 until blcodes) sendBits(blTree[BL_ORDER[rank] * 2 + 1], 3)
+    for (rank in 0 until blcodes) sendBits(blTree[StaticTrees.blOrder[rank] * 2 + 1], 3)
     sendTree(dynLtree, lcodes - 1)
     sendTree(dynDtree, dcodes - 1)
 }
