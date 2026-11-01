@@ -8,15 +8,34 @@ import kotlin.test.assertTrue
 
 class RoundTripTest {
     @Test
-    fun allLevelsAndFormats() {
-        for ((name, data) in samples()) {
-            for (format in ZlibFormat.entries) {
-                for (level in -1..9) {
-                    val packed = compress(data, level, format)
-                    val (unpacked, consumed) = decompress(packed, format)
-                    assertContentEquals(data, unpacked, "$name $format level $level")
-                    assertEquals(packed.size, consumed, "$name $format level $level consumed")
-                }
+    fun emptyAllLevelsAndFormats() = allLevelsAndFormats("empty")
+
+    @Test
+    fun oneByteAllLevelsAndFormats() = allLevelsAndFormats("one byte")
+
+    @Test
+    fun shortAllLevelsAndFormats() = allLevelsAndFormats("short")
+
+    @Test
+    fun zerosAllLevelsAndFormats() = allLevelsAndFormats("zeros")
+
+    @Test
+    fun randomAllLevelsAndFormats() = allLevelsAndFormats("random")
+
+    @Test
+    fun textAllLevelsAndFormats() = allLevelsAndFormats("text")
+
+    @Test
+    fun mixedAllLevelsAndFormats() = allLevelsAndFormats("mixed")
+
+    private fun allLevelsAndFormats(name: String) {
+        val data = samples().single { it.first == name }.second
+        for (format in ZlibFormat.entries) {
+            for (level in -1..9) {
+                val packed = compress(data, level, format)
+                val (unpacked, consumed) = decompress(packed, format)
+                assertContentEquals(data, unpacked, "$name $format level $level")
+                assertEquals(packed.size, consumed, "$name $format level $level consumed")
             }
         }
     }

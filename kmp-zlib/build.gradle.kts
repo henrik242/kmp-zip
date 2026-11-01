@@ -27,12 +27,7 @@ kotlin {
         browser {
             testTask { enabled = false }
         }
-        nodejs {
-            testTask {
-                // The all-levels round-trip test can exceed Mocha's default 2s on CI.
-                useMocha { timeout = "30s" }
-            }
-        }
+        nodejs()
     }
     @OptIn(ExperimentalWasmDsl::class)
     wasmJs {
