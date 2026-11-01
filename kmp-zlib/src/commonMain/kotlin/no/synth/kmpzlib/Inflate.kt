@@ -36,6 +36,10 @@ private const val LENGTH = 16207
 private const val DONE = 16208
 private const val BAD = 16209
 
+// Matches shorter than this are copied byte by byte: copyInto costs more than a short
+// loop, most of all on js, where it allocates a subarray.
+private const val BULK_COPY_MIN = 32
+
 private val ORDER = intArrayOf(16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15)
 
 private fun zswap32(q: Int): Int =
@@ -312,15 +316,39 @@ private fun inflateFast(state: InflateState, start: Int) {
                             }
                         } else {
                             var from = out - dist
-                            do {
-                                output[out++] = output[from++]
-                                output[out++] = output[from++]
-                                output[out++] = output[from++]
-                                len -= 3
-                            } while (len > 2)
-                            if (len != 0) {
-                                output[out++] = output[from++]
-                                if (len > 1) output[out++] = output[from++]
+                            if (len < BULK_COPY_MIN) {
+                                do {
+                                    output[out++] = output[from++]
+                                    output[out++] = output[from++]
+                                    output[out++] = output[from++]
+                                    len -= 3
+                                } while (len > 2)
+                                if (len != 0) {
+                                    output[out++] = output[from++]
+                                    if (len > 1) output[out++] = output[from++]
+                                }
+                            } else if (dist >= len) {
+                                output.copyInto(output, out, from, from + len)
+                                out += len
+                            } else if (dist == 1) {
+                                output.fill(output[from], out, out + len)
+                                out += len
+                            } else {
+                                // Overlapping: the output repeats with period dist. Copy
+                                // whole periods byte by byte until [from, out) spans at
+                                // least BULK_COPY_MIN bytes, then copy that span forward
+                                // in doubling chunks; it stays a whole number of periods.
+                                val start = from
+                                var m = (BULK_COPY_MIN - 1) / dist * dist
+                                len -= m
+                                while (m-- != 0) output[out++] = output[from++]
+                                from = start
+                                while (len != 0) {
+                                    val n = if (out - from < len) out - from else len
+                                    output.copyInto(output, out, from, from + n)
+                                    out += n
+                                    len -= n
+                                }
                             }
                         }
                     } else if ((op and 64) == 0) {
