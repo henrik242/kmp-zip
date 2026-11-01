@@ -14,6 +14,12 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 - js and wasmJs deflate/inflate with kmp-zlib instead of the pako npm package, so
   kmp-zip no longer has npm dependencies. Compressed output is the same as pako's.
 
+### Fixed
+- `ZipInputStream.nextEntry` throws `ZipFormatException` when the input ends after an
+  entry instead of returning `null`, and when an entry is followed by an unknown `PK`
+  signature. An APK Signing Block, or other data without a `PK` signature, still ends
+  the entries. (#49)
+
 ## 2.0.0 - 2026-10-28
 
 ### Added

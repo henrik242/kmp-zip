@@ -103,6 +103,9 @@ class ZipInputStream @JvmOverloads constructor(
 
     private var firstSignatureRead: Boolean = false
 
+    // Set once nextEntry has returned null, so later calls do not read past the end.
+    private var entriesEnded: Boolean = false
+
     // An encrypted DEFLATED entry with a data descriptor and no sizes ends where its
     // deflate stream ends. Its bytes are decrypted ahead of the inflater, so the
     // ciphertext is kept in rawBuf: what the inflater does not consume (the AES auth code
@@ -155,15 +158,15 @@ class ZipInputStream @JvmOverloads constructor(
             if (closed) throw IllegalStateException("Stream closed")
             closeEntry()
 
-            // Probe one byte to tell a clean end of input (no more entries) from a
-            // truncated or failed read. A -1 at this boundary means the archive ended;
-            // once a byte is read we are committed to a full signature, so a short read
-            // while completing it is truncation (readByte throws), and a source I/O error
-            // propagates with its own type instead of being mistaken for end-of-archive.
+            if (entriesEnded) return null
+
+            // Input may only end before the first signature (empty input) or after the
+            // central directory, which we stop at, so a -1 here is always truncation.
+            // A source I/O error propagates with its own type.
             val firstByte = readRawByte()
             if (firstByte == -1) {
                 if (!firstSignatureRead) throw ZipFormatException("Not a ZIP file: empty or truncated input")
-                return null
+                throw ZipFormatException("Truncated ZIP: input ended before the central directory")
             }
             val sig = firstByte or (readByte() shl 8) or (readByte() shl 16) or (readByte() shl 24)
             if (!firstSignatureRead) {
@@ -175,10 +178,36 @@ class ZipInputStream @JvmOverloads constructor(
                     throw ZipFormatException("Not a ZIP file: bad signature 0x${sig.toUInt().toString(16).padStart(8, '0')}")
                 }
             }
-            if (sig != ZipConstants.LOCAL_FILE_HEADER_SIGNATURE) return null
+            if (sig == ZipConstants.LOCAL_FILE_HEADER_SIGNATURE) return readNextEntry()
 
-            return readNextEntry()
+            // A "PK" record we do not know is a damaged header, unless it is an APK
+            // Signing Block whose length happens to start with "PK". Anything else ends
+            // the entries, as in java.util.zip: an APK Signing Block or padding may sit
+            // between the last entry and the central directory.
+            if (sig and 0xFFFF == 0x4b50 && sig !in END_OF_ENTRIES_SIGS && !skipApkSigningBlock(sig)) {
+                throw ZipFormatException("Bad header signature 0x${sig.toUInt().toString(16).padStart(8, '0')}")
+            }
+            entriesEnded = true
+            return null
         }
+
+    /**
+     * Treats [low] as the low half of an APK Signing Block's leading uint64 length and
+     * checks the block: a first ID-value pair that fits, then the trailer (the length
+     * repeated, then the magic). Consumes input. The length and first pair are checked
+     * before skipping, so a damaged header is rejected without reading far.
+     */
+    private fun skipApkSigningBlock(low: Int): Boolean {
+        if (readLeInt() != 0) return false
+        val size = low.toLong() and 0xFFFFFFFFL
+        val pairsSize = size - APK_SIG_BLOCK_TRAILER_SIZE
+        if (size > MAX_APK_SIG_BLOCK_SIZE || pairsSize < 12) return false
+        val firstPairLen = readLeInt().toLong() and 0xFFFFFFFFL
+        if (readLeInt() != 0 || firstPairLen < 4 || firstPairLen > pairsSize - 8) return false
+        skipRaw(pairsSize - 8)
+        if (readLeInt() != low || readLeInt() != 0) return false
+        return readExact(APK_SIG_BLOCK_MAGIC.size).contentEquals(APK_SIG_BLOCK_MAGIC)
+    }
 
     private fun readNextEntry(): ZipEntry? {
 
@@ -947,6 +976,22 @@ class ZipInputStream @JvmOverloads constructor(
         // readLeUInt yields a Long; compare against the unsigned signatures as Longs.
         private val LOCAL_HEADER_SIG = ZipConstants.LOCAL_FILE_HEADER_SIGNATURE.toLong()
         private val CENTRAL_HEADER_SIG = ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE.toLong()
+
+        private val APK_SIG_BLOCK_MAGIC = "APK Sig Block 42".encodeToByteArray()
+
+        // The repeated uint64 length and the magic.
+        private const val APK_SIG_BLOCK_TRAILER_SIZE = 24L
+
+        // Real blocks are a few KiB. Bounds how far garbage after "PK" is skipped.
+        private const val MAX_APK_SIG_BLOCK_SIZE = 16L * 1024 * 1024
+
+        // Records that may follow the last entry.
+        private val END_OF_ENTRIES_SIGS = intArrayOf(
+            ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE,
+            ZipConstants.END_OF_CENTRAL_DIR_SIGNATURE,
+            ZipConstants.ZIP64_END_OF_CENTRAL_DIR_SIGNATURE,
+            ZipConstants.ARCHIVE_EXTRA_DATA_SIGNATURE,
+        )
 
         /** Constant-time byte array comparison to prevent timing attacks. */
         private fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {

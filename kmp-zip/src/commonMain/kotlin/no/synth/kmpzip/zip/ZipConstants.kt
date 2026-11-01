@@ -13,6 +13,9 @@ object ZipConstants {
     internal const val ZIP64_END_OF_CENTRAL_DIR_SIGNATURE = 0x06064b50
     internal const val ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE = 0x07064b50
 
+    /** Precedes an encrypted central directory (APPNOTE 4.3.11). */
+    internal const val ARCHIVE_EXTRA_DATA_SIGNATURE = 0x08064b50
+
     /** Header ID of the ZIP64 extended information extra field. */
     internal const val ZIP64_EXTRA_ID = 0x0001
 
