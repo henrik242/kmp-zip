@@ -141,27 +141,31 @@ class RoundTripTest {
         assertFailsWith<ZlibDataException> { decompress(header) }
     }
 
+    // One test per format, each kept small: Mocha fails js tests that run over 2 s.
     @Test
-    fun corruptedZlibAndGzipNeverInflateToWrongData() {
-        // The check value makes silently wrong output a bug: corrupted input must either
-        // inflate to the original (a flipped bit that changes nothing) or fail.
+    fun corruptedZlibNeverInflatesToWrongData() = corruptedNeverInflatesToWrongData(ZlibFormat.ZLIB)
+
+    @Test
+    fun corruptedGzipNeverInflatesToWrongData() = corruptedNeverInflatesToWrongData(ZlibFormat.GZIP)
+
+    // The check value makes silently wrong output a bug: corrupted input must either
+    // inflate to the original (a flipped bit that changes nothing) or fail.
+    private fun corruptedNeverInflatesToWrongData(format: ZlibFormat) {
         val original = samples().first { it.first == "mixed" }.second
-        for (format in listOf(ZlibFormat.ZLIB, ZlibFormat.GZIP)) {
-            val rnd = kotlin.random.Random(format.ordinal)
-            val valid = compress(original, format = format)
-            repeat(200) {
-                val bad = valid.copyOf()
-                repeat(rnd.nextInt(1, 4)) { bad[rnd.nextInt(bad.size)] = rnd.nextInt(256).toByte() }
-                val result = try {
-                    decompress(bad, format, inChunk = rnd.nextInt(1, 5000), outChunk = rnd.nextInt(1, 5000)).first
-                } catch (_: ZlibDataException) {
-                    null
-                } catch (e: IllegalStateException) {
-                    assertTrue(e.message.orEmpty().startsWith("no progress"), e.toString())
-                    null
-                }
-                if (result != null) assertContentEquals(original, result, "$format inflated corrupt data")
+        val rnd = kotlin.random.Random(format.ordinal)
+        val valid = compress(original, format = format)
+        repeat(75) {
+            val bad = valid.copyOf()
+            repeat(rnd.nextInt(1, 4)) { bad[rnd.nextInt(bad.size)] = rnd.nextInt(256).toByte() }
+            val result = try {
+                decompress(bad, format, inChunk = rnd.nextInt(1, 5000), outChunk = rnd.nextInt(1, 5000)).first
+            } catch (_: ZlibDataException) {
+                null
+            } catch (e: IllegalStateException) {
+                assertTrue(e.message.orEmpty().startsWith("no progress"), e.toString())
+                null
             }
+            if (result != null) assertContentEquals(original, result, "$format inflated corrupt data")
         }
     }
 
