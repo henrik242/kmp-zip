@@ -9,6 +9,8 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 ### Added
 - `no.synth:kmp-zlib`, a pure-Kotlin port of pako's zlib (raw DEFLATE, zlib and gzip
   streams) for every target. MIT and Zlib licenses.
+- `ZipInputStream(..., verifyCentralDirectory = true)` reads the central directory when
+  the entries end and checks it against them: count, names, offsets, CRC-32 and sizes.
 
 ### Changed
 - js and wasmJs deflate/inflate with kmp-zlib instead of the pako npm package, so

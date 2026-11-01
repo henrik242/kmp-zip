@@ -151,69 +151,9 @@ class ZipFile @JvmOverloads constructor(
         val result = ArrayList<CdEntry>(minOf(totalEntries, (cd.size / CD_FIXED_LEN).toLong()).toInt())
         var p = 0
         while (p + 4 <= cd.size && readLeUInt(cd, p) == CENTRAL_DIR_HEADER_SIG) {
-            if (p + CD_FIXED_LEN > cd.size) throw ZipFormatException("Truncated central directory header")
-
-            val utf8 = readLeShort(cd, p + 8) and UTF8_FLAG != 0
-            val method = readLeShort(cd, p + 10)
-            val time = readLeShort(cd, p + 12)
-            val date = readLeShort(cd, p + 14)
-            val crc = readLeUInt(cd, p + 16)
-            var compressedSize = readLeUInt(cd, p + 20)
-            var uncompressedSize = readLeUInt(cd, p + 24)
-            val nameLen = readLeShort(cd, p + 28)
-            val extraLen = readLeShort(cd, p + 30)
-            val commentLen = readLeShort(cd, p + 32)
-            var diskStart = readLeShort(cd, p + 34).toLong()
-            var localHeaderOffset = readLeUInt(cd, p + 42)
-
-            val nameStart = p + CD_FIXED_LEN
-            val extraStart = nameStart + nameLen
-            val commentStart = extraStart + extraLen
-            val nextStart = commentStart + commentLen
-            if (nextStart > cd.size) throw ZipFormatException("Truncated central directory header")
-
-            val name = decodeZipText(cd, nameStart, extraStart, utf8)
-            val extra = if (extraLen > 0) cd.copyOfRange(extraStart, commentStart) else null
-
-            val uMarked = uncompressedSize == ZipConstants.ZIP64_MAGIC
-            val cMarked = compressedSize == ZipConstants.ZIP64_MAGIC
-            val offsetMarked = localHeaderOffset == ZipConstants.ZIP64_MAGIC
-            val diskMarked = diskStart == ZipConstants.ZIP64_MAGIC_COUNT.toLong()
-            if (uMarked || cMarked || offsetMarked || diskMarked) {
-                val zip64Extra = Zip64Extra.find(extra)
-                    ?: throw ZipFormatException("Missing ZIP64 extra field for entry: $name")
-                uncompressedSize = zip64Extra.next(uncompressedSize, uMarked)
-                compressedSize = zip64Extra.next(compressedSize, cMarked)
-                localHeaderOffset = zip64Extra.next(localHeaderOffset, offsetMarked)
-                diskStart = zip64Extra.nextInt(diskStart, diskMarked)
-            }
-            if (diskStart != 0L) {
-                throw ZipUnsupportedFeatureException("Split/spanned ZIP archives are not supported")
-            }
-            val comment = if (commentLen > 0) decodeZipText(cd, commentStart, nextStart, utf8) else null
-
-            val dosTime = (date.toLong() shl 16) or time.toLong()
-
-            // Mirror ZipInputStream: report the actual compression method for AES entries.
-            val effectiveMethod = if (method == ZipConstants.AE_ENCRYPTED) {
-                parseAesExtraFieldOrThrow(extra)?.actualCompressionMethod ?: method
-            } else {
-                method
-            }
-
-            val entry = ZipEntry(
-                name = name,
-                size = uncompressedSize,
-                compressedSize = compressedSize,
-                crc = crc,
-                method = effectiveMethod,
-                time = dosTime,
-                extra = extra,
-            )
-            entry.comment = comment
-
-            result.add(CdEntry(entry, localHeaderOffset))
-            p = nextStart
+            val header = parseCentralDirectoryHeader(cd, p)
+            result.add(CdEntry(header.entry, header.localHeaderOffset))
+            p = header.end
         }
 
         // The signature loop stops at the first non-header word. Fail loudly only when
@@ -326,9 +266,6 @@ class ZipFile @JvmOverloads constructor(
         val END_OF_CENTRAL_DIR_SIG = ZipConstants.END_OF_CENTRAL_DIR_SIGNATURE.toLong()
         val ZIP64_EOCD_SIG = ZipConstants.ZIP64_END_OF_CENTRAL_DIR_SIGNATURE.toLong()
         val ZIP64_LOCATOR_SIG = ZipConstants.ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE.toLong()
-
-        /** Fixed-size portion of a central directory header (before name/extra/comment). */
-        const val CD_FIXED_LEN = 46
 
         /** Fixed-size portion of an end-of-central-directory record (before comment). */
         const val EOCD_MIN_LEN = 22
