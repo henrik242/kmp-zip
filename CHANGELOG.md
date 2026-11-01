@@ -21,6 +21,8 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
   entry instead of returning `null`, and when an entry is followed by an unknown `PK`
   signature. An APK Signing Block, or other data without a `PK` signature, still ends
   the entries. (#49)
+- `ZipInputStream` reads a data descriptor without a signature when the entry's CRC-32
+  equals the signature value, instead of failing with a size mismatch. (#50)
 
 ## 2.0.0 - 2026-10-28
 

@@ -547,6 +547,35 @@ class ZipInputStreamTest {
     }
 
     @Test
+    fun deflatedCrcEqualToSignatureWithoutDescriptorSignature() {
+        // CRC-32 is 0x08074b50, the descriptor signature (#50).
+        val content = "hello issue 50, payload ".encodeToByteArray() +
+            byteArrayOf(0xb5.toByte(), 0x0e, 0x80.toByte(), 0xa4.toByte())
+        val bytes = ByteArrayOutputStream().also { out ->
+            ZipOutputStream(out).use { zip ->
+                zip.putNextEntry(ZipEntry("x.bin"))
+                zip.write(content)
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("y.txt"))
+                zip.write("second".encodeToByteArray())
+                zip.closeEntry()
+            }
+        }.toByteArray()
+        // The descriptor's signature followed by its CRC: "PK\7\8" twice.
+        val pkpk = byteArrayOf(0x50, 0x4b, 7, 8, 0x50, 0x4b, 7, 8)
+        val sig = (0..bytes.size - 8).first { i -> pkpk.indices.all { bytes[i + it] == pkpk[it] } }
+        val stripped = bytes.copyOf(sig) + bytes.copyOfRange(sig + 4, bytes.size)
+        for (data in listOf(bytes, stripped)) {
+            ZipInputStream(data).use { zis ->
+                assertEquals("x.bin", zis.nextEntry?.name)
+                assertContentEquals(content, zis.readBytes())
+                assertEquals("y.txt", zis.nextEntry?.name)
+                assertEquals("second", zis.readBytes().decodeToString())
+            }
+        }
+    }
+
+    @Test
     fun nextEntryKeepsReturningNullAfterEnd() {
         ZipInputStream(abcZip()).use { zis ->
             repeat(3) { assertNotNull(zis.nextEntry) }
