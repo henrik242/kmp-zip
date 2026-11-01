@@ -6,7 +6,13 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 
 ## Unreleased
 
-n/a
+### Added
+- `no.synth:kmp-zlib`, a pure-Kotlin port of pako's zlib (raw DEFLATE, zlib and gzip
+  streams) for every target. MIT and Zlib licenses.
+
+### Changed
+- js and wasmJs deflate/inflate with kmp-zlib instead of the pako npm package, so
+  kmp-zip no longer has npm dependencies. Compressed output is the same as pako's.
 
 ## 2.0.0 - 2026-10-28
 

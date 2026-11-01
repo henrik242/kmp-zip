@@ -7,7 +7,7 @@ set -euo pipefail
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-for m in kmp-zip kmp-zip-okio kmp-zip-kotlinx; do
+for m in kmp-zlib kmp-zip kmp-zip-okio kmp-zip-kotlinx; do
   # *[0-9].jar is the plain artifact, skipping -sources.jar and -javadoc.jar. A stale
   # jar from an earlier version would make unzip treat the second match as a filter.
   set -- "$m"/build/libs/*-jvm-*[0-9].jar

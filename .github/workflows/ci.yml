@@ -22,7 +22,7 @@ jobs:
       matrix:
         include:
           - os: macos-latest
-            tasks: ":kmp-zip:jvmTest :kmp-zip:iosSimulatorArm64Test :kmp-zip:macosArm64Test :kmp-zip:jsNodeTest :kmp-zip:wasmJsNodeTest :samples:browser-demo:jsNodeTest :samples:browser-demo:wasmJsNodeTest :kmp-zip-okio:check :kmp-zip-kotlinx:check :kmp-zip-cli:jvmTest :kmp-zip-cli:macosArm64Test"
+            tasks: ":kmp-zlib:check :kmp-zip:jvmTest :kmp-zip:iosSimulatorArm64Test :kmp-zip:macosArm64Test :kmp-zip:jsNodeTest :kmp-zip:wasmJsNodeTest :samples:browser-demo:jsNodeTest :samples:browser-demo:wasmJsNodeTest :kmp-zip-okio:check :kmp-zip-kotlinx:check :kmp-zip-cli:jvmTest :kmp-zip-cli:macosArm64Test"
             cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableMacosArm64 :kmp-zip-cli:linkReleaseExecutableMacosX64"
             primary: true
           - os: ubuntu-latest
@@ -139,7 +139,7 @@ jobs:
         shell: bash
         run: >-
           ./gradlew -Ptest.jvm=8
-          :kmp-zip:jvmTest :kmp-zip-okio:jvmTest :kmp-zip-kotlinx:jvmTest
+          :kmp-zlib:jvmTest :kmp-zip:jvmTest :kmp-zip-okio:jvmTest :kmp-zip-kotlinx:jvmTest
       - name: Publish kmp-zip to Maven Local
         shell: bash
         run: >-

@@ -134,7 +134,7 @@ kotlin {
     // would try to download a headless Chromium onto CI runners.
     js {
         // CommonJS rather than the UMD default: UMD additionally requires
-        // @JsNonModule on the pako externals, and that annotation doesn't exist
+        // @JsNonModule on the node:fs externals, and that annotation doesn't exist
         // on wasmJs, so it can't live in the shared webMain source set. This is
         // a build-time choice for this module only; consumers pick their own.
         compilerOptions { moduleKind.set(JsModuleKind.MODULE_COMMONJS) }
@@ -178,21 +178,16 @@ kotlin {
 
         // webMain/webTest are KGP's own js+wasmJs fragments (and kotlin-stdlib's
         // name for the same pair), already wired by applyDefaultHierarchyTemplate.
-        // The pako bindings, the chunk-drain logic and the Node fs SeekableSource
-        // are identical on both, since Kotlin's unified JS interop (JsAny, js(),
-        // external classes) compiles one source for both. Only the ByteArray <->
-        // Uint8Array marshalling differs; see PakoMarshal.*.kt.
+        // The codec wrappers and the Node fs SeekableSource are identical on both,
+        // since Kotlin's unified JS interop (JsAny, js(), external classes) compiles
+        // one source for both. Only the Uint8Array -> ByteArray copy differs; see
+        // Uint8ArrayMarshal.*.kt.
         sourceSets["webMain"].apply {
             dependsOn(commonNonJvmMain)
             dependsOn(pureKotlinCryptoMain)
             dependencies {
-                // pako is the de-facto sync zlib in JS - zero deps, matches our
-                // PlatformDeflater/PlatformInflater contract 1:1 (raw/zlib/gzip
-                // wbits, Z_NO_FLUSH/Z_FINISH, synchronous push). 3.x is ESM-first
-                // but still ships a CJS build, which is what moduleKind COMMONJS
-                // above resolves. Pinned to exact version; consumers should use a
-                // lockfile.
-                implementation(npm("pako", "3.0.1"))
+                // Pure-Kotlin zlib for the targets with no platform one.
+                implementation(project(":kmp-zlib"))
             }
         }
 

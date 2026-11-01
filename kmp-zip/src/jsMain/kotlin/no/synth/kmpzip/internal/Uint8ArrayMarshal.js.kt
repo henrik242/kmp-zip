@@ -1,17 +1,12 @@
 @file:Suppress("UNUSED_PARAMETER")
 
-package no.synth.kmpzip.zip
-
-import no.synth.kmpzip.internal.Uint8Array
+package no.synth.kmpzip.internal
 
 // Kotlin/JS compiles ByteArray to a JS Int8Array, so a ByteArray and a
 // Uint8Array can share one ArrayBuffer and both directions are a typed-array
 // view or a bulk `set()` — no per-byte boundary traffic, unlike wasmJs.
 
-// A view, not a copy. Safe because pako copies whatever it keeps into its own
-// window during push() and never reads strm.input again after push() returns —
-// Inflate does stop at Z_STREAM_END holding a live reference, but the next push
-// reassigns it before reading. PakoMarshalTest keeps a canary on that.
+// A view, not a copy: writes through either side are visible in the other.
 // Kotlin never hands out a ByteArray backed by a view, so `byteOffset` is always
 // 0; it is there for a Uint8Array unsafeCast in from consumer code.
 private fun uint8ArrayView(src: ByteArray, offset: Int, length: Int): Uint8Array =

@@ -1,6 +1,7 @@
 package no.synth.kmpzip.zip
 
 import no.synth.kmpzip.io.fileSeekableSource
+import no.synth.kmpzip.internal.byteArrayToUint8Array
 import no.synth.kmpzip.io.readBytes
 import kotlin.random.Random
 import kotlin.test.Test

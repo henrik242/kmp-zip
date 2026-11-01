@@ -6,13 +6,14 @@ Provides `ByteArrayInputStream`, `ByteArrayOutputStream`, `ZipInputStream`, `Zip
 - **WinZip AES** (AES-128/192/256, AE-1 and AE-2 formats) — strong encryption, compatible with 7-Zip, WinRAR, etc.
 - **PKWare traditional** (ZipCrypto) — legacy encryption compatible with all ZIP tools including macOS `zip` and Windows Explorer
 
-All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on Apple targets, `platform.zlib` + a pure-Kotlin AES/HMAC/PBKDF2 fallback on Linux and Windows native targets, [pako](https://github.com/nodeca/pako) (MIT) + the same pure-Kotlin crypto on js and wasmJs.
+All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specific code is limited to thin wrappers around native primitives: `java.util.zip` + `javax.crypto` on JVM, `platform.zlib` + `CommonCrypto` on Apple targets, `platform.zlib` + a pure-Kotlin AES/HMAC/PBKDF2 fallback on Linux and Windows native targets, and on js and wasmJs the same pure-Kotlin crypto + `kmp-zlib`, a pure-Kotlin port of [pako](https://github.com/nodeca/pako)'s zlib (MIT and Zlib licenses).
 
 ## Modules
 
 | Artifact | Description |
 |----------|-------------|
 | `no.synth:kmp-zip` | Core I/O, ZIP, and GZIP streams |
+| `no.synth:kmp-zlib` | Pure-Kotlin zlib (raw DEFLATE, zlib, gzip) ported from pako. kmp-zip uses it on js and wasmJs only. It builds for every target, but on JVM, Android and native the platform zlib is faster. One `Deflater`/`Inflater` per stream; they are not thread-safe. MIT and Zlib licenses. |
 | `no.synth:kmp-zip-kotlinx` | [kotlinx-io](https://github.com/Kotlin/kotlinx-io) `Source`/`Sink` adapters (both directions) for the core streams |
 | `no.synth:kmp-zip-okio` | [OkIO](https://square.github.io/okio/) `BufferedSource`/`BufferedSink`/`Source`/`Sink` adapters (both directions) for the core streams |
 | `kmp-zip-cli` | Command-line tool for ZIP/GZIP operations — ships as standalone native binaries on macOS / Linux / Windows, with a JVM fallback. Not published to Maven Central. |
@@ -44,10 +45,10 @@ That builds the bundle, starts a webpack dev server on `http://localhost:8080`, 
 
 ### Runtime caveats:
 
-- **pako runtime dependency.** Deflate/inflate is delegated to [pako 3.0.1](https://github.com/nodeca/pako), pinned exactly. Kotlin's js and wasmJs builds pick it up automatically — the kmp-zip project's `kotlin-js-store/yarn.lock` and `kotlin-js-store/wasm/yarn.lock` record the tarball SHA-512 (`sha512-GupotUUI...`). Downstream consumers manage their own lockfile; commit yours, and note that KGP fails the build on lockfile drift by default (`yarnLockMismatchReport`), refreshed with `kotlinUpgradeYarnLock`. pako adds ~45 KB minified (~14 KB gzipped) to a bundle and is not effectively tree-shakeable.
+- **No npm dependencies.** Deflate/inflate comes from `kmp-zlib`, a pure-Kotlin port of pako, pulled in as an ordinary Maven dependency.
 - **`fileSeekableSource` is Node-only, and on `js` it breaks browser bundling.** It binds Node's `node:fs`, which a bundler resolves statically: on `js`, merely referencing `fileSeekableSource` from code reachable in a browser bundle fails the build with `Can't resolve 'node:fs'`. Keep it behind a Node-only entry point, or use `ByteArraySeekableSource` in the browser. Unreachable references are dropped cleanly on both targets.
 - **`Crypto.randomBytes` requires Web Crypto.** Calls `globalThis.crypto.getRandomValues`, which is available in any browser context (HTTPS *or* plain `http://`) and Node 20+. If the runtime doesn't expose Web Crypto — sandboxed JS realms, browsers with Web Crypto disabled by policy — the call throws `IllegalStateException` naming the likely cause.
-- **Long-running compression blocks the UI thread.** pako is synchronous; deflating a multi-MB archive on the main browser thread can stall rendering for hundreds of ms. For anything beyond small archives, run kmp-zip in a `DedicatedWorker`. Neither target depends on `window`/`document`, so a worker works without extra setup.
+- **Long-running compression blocks the UI thread.** The codec is synchronous; deflating a multi-MB archive on the main browser thread can stall rendering for hundreds of ms. For anything beyond small archives, run kmp-zip in a `DedicatedWorker`. Neither target depends on `window`/`document`, so a worker works without extra setup.
 
 ## Threat model
 
@@ -55,7 +56,7 @@ That builds the bundle, starts a webpack dev server on `http://localhost:8080`, 
 
 Decrypting attacker-supplied archives with a user-typed password in the browser is fine — the password is already there. PBKDF2 and HMAC-SHA1 are not table-based and have no known cache-timing leakage in the pure-Kotlin impl.
 
-**Decompression bombs.** kmp-zip does not enforce an upper bound on inflated output; pako has no `maxOutputLength`. A 1 KB compressed stream can inflate to 1 GB. Cap untrusted ZIP reads explicitly:
+**Decompression bombs.** kmp-zip does not enforce an upper bound on inflated output. A 1 KB compressed stream can inflate to 1 GB. Cap untrusted ZIP reads explicitly:
 
 ```kotlin
 val MAX_BYTES = 100L * 1024 * 1024  // 100 MB

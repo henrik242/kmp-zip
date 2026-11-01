@@ -59,9 +59,8 @@ actual class GzipInputStream actual constructor(private val input: InputStream) 
 
         while (true) {
             // Always call inflate, even with no fresh input. The inflater may
-            // hold buffered output left over from a previous push (the wasmJs
-            // pako wrapper accumulates output internally and needs subsequent
-            // calls to drain it). On native/zlib this is a cheap no-op.
+            // hold output left over from a previous call, such as a match cut
+            // short by a full buffer.
             val available = inputBufLen - inputBufPos
             // A bad deflate stream or a failed gzip CRC/ISIZE trailer check surfaces from the
             // codec as a CodecException; type it as GzipFormatException. Programmer errors
