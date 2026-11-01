@@ -7,29 +7,31 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class RoundTripTest {
-    @Test
-    fun emptyAllLevelsAndFormats() = allLevelsAndFormats("empty")
+    private val roundTripSamples = TestSamples()
 
     @Test
-    fun oneByteAllLevelsAndFormats() = allLevelsAndFormats("one byte")
+    fun emptyAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.empty)
 
     @Test
-    fun shortAllLevelsAndFormats() = allLevelsAndFormats("short")
+    fun oneByteAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.oneByte)
 
     @Test
-    fun zerosAllLevelsAndFormats() = allLevelsAndFormats("zeros")
+    fun shortAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.short)
 
     @Test
-    fun randomAllLevelsAndFormats() = allLevelsAndFormats("random")
+    fun zerosAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.zeros)
 
     @Test
-    fun textAllLevelsAndFormats() = allLevelsAndFormats("text")
+    fun randomAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.random)
 
     @Test
-    fun mixedAllLevelsAndFormats() = allLevelsAndFormats("mixed")
+    fun textAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.text)
 
-    private fun allLevelsAndFormats(name: String) {
-        val data = samples().single { it.first == name }.second
+    @Test
+    fun mixedAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.mixed)
+
+    private fun allLevelsAndFormats(sample: Pair<String, ByteArray>) {
+        val (name, data) = sample
         for (format in ZlibFormat.entries) {
             for (level in -1..9) {
                 val packed = compress(data, level, format)
@@ -37,6 +39,15 @@ class RoundTripTest {
                 assertContentEquals(data, unpacked, "$name $format level $level")
                 assertEquals(packed.size, consumed, "$name $format level $level consumed")
             }
+        }
+    }
+
+    @Test
+    fun namedSamplesMatchFreshSamples() {
+        val freshSamples = samples()
+        assertEquals(freshSamples.map { it.first }, roundTripSamples.all.map { it.first })
+        for ((fresh, named) in freshSamples.zip(roundTripSamples.all)) {
+            assertContentEquals(fresh.second, named.second, fresh.first)
         }
     }
 
