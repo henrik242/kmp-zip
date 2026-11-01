@@ -168,15 +168,33 @@ class RoundTripTest {
     }
 
     @Test
-    fun finishingDeflaterRejectsMoreInput() {
+    fun finishWithInputAndSmallOutputKeepsAllInput() {
         val data = samples().first { it.first == "random" }.second
         val d = Deflater()
-        val out = ByteArray(16)
-        // A small output buffer leaves the stream mid-finish.
-        val r = d.deflate(data, 0, data.size, out, 0, out.size, finish = true)
+        val out = Sink()
+        val buf = ByteArray(1000)
+        var off = 0
+        do {
+            // Pass back whatever the previous call left unread.
+            val r = d.deflate(data, off, data.size - off, buf, 0, buf.size, finish = true)
+            off += r.bytesConsumed
+            out.write(buf, r.bytesProduced)
+        } while (!r.streamEnd)
+        assertEquals(data.size, off)
+        assertContentEquals(data, decompress(out.toByteArray()).first)
+    }
+
+    @Test
+    fun finishingDeflaterRejectsInputOnceAllIsConsumed() {
+        val data = samples().first { it.first == "random" }.second.copyOf(1000)
+        val d = Deflater()
+        val out = ByteArray(200_000)
+        // All input fits, but a 16-byte buffer leaves the stream mid-finish.
+        val r = d.deflate(data, 0, data.size, out, 0, 16, finish = true)
+        assertEquals(data.size, r.bytesConsumed)
         assertTrue(!r.streamEnd)
-        assertFailsWith<IllegalStateException> { d.deflate(data, 0, 1, out, 0, out.size, finish = true) }
-        assertFailsWith<IllegalStateException> { d.deflate(EMPTY_INPUT, 0, 0, out, 0, out.size) }
+        assertFailsWith<IllegalStateException> { d.deflate(data, 0, 1, out, 0, 16, finish = true) }
+        assertFailsWith<IllegalStateException> { d.deflate(EMPTY_INPUT, 0, 0, out, 0, 16) }
     }
 
     @Test
