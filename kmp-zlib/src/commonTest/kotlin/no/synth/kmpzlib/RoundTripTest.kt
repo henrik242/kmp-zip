@@ -142,6 +142,30 @@ class RoundTripTest {
     }
 
     @Test
+    fun corruptedZlibAndGzipNeverInflateToWrongData() {
+        // The check value makes silently wrong output a bug: corrupted input must either
+        // inflate to the original (a flipped bit that changes nothing) or fail.
+        val original = samples().first { it.first == "mixed" }.second
+        for (format in listOf(ZlibFormat.ZLIB, ZlibFormat.GZIP)) {
+            val rnd = kotlin.random.Random(format.ordinal)
+            val valid = compress(original, format = format)
+            repeat(200) {
+                val bad = valid.copyOf()
+                repeat(rnd.nextInt(1, 4)) { bad[rnd.nextInt(bad.size)] = rnd.nextInt(256).toByte() }
+                val result = try {
+                    decompress(bad, format, inChunk = rnd.nextInt(1, 5000), outChunk = rnd.nextInt(1, 5000)).first
+                } catch (_: ZlibDataException) {
+                    null
+                } catch (e: IllegalStateException) {
+                    assertTrue(e.message.orEmpty().startsWith("no progress"), e.toString())
+                    null
+                }
+                if (result != null) assertContentEquals(original, result, "$format inflated corrupt data")
+            }
+        }
+    }
+
+    @Test
     fun randomGarbageNeverCrashes() {
         val rnd = kotlin.random.Random(7)
         val valid = compress(samples().first { it.first == "mixed" }.second, format = ZlibFormat.RAW)
@@ -174,14 +198,54 @@ class RoundTripTest {
         val out = Sink()
         val buf = ByteArray(1000)
         var off = 0
+        var calls = 0
         do {
             // Pass back whatever the previous call left unread.
             val r = d.deflate(data, off, data.size - off, buf, 0, buf.size, finish = true)
+            // The case #55 fixed: a finish call that leaves input unread.
+            if (calls++ == 0) assertTrue(r.bytesConsumed < data.size, "first call consumed everything")
             off += r.bytesConsumed
             out.write(buf, r.bytesProduced)
         } while (!r.streamEnd)
         assertEquals(data.size, off)
         assertContentEquals(data, decompress(out.toByteArray()).first)
+    }
+
+    @Test
+    fun finishingDeflaterTakesExactlyTheUnreadInput() {
+        val data = samples().first { it.first == "random" }.second
+        val d = Deflater()
+        val buf = ByteArray(1000)
+        val r = d.deflate(data, 0, data.size - 1, buf, 0, buf.size, finish = true)
+        val unread = data.size - 1 - r.bytesConsumed
+        assertTrue(unread > 0)
+        val e = assertFailsWith<IllegalStateException> {
+            d.deflate(data, r.bytesConsumed, unread + 1, buf, 0, buf.size, finish = true)
+        }
+        assertTrue(e.message.orEmpty().contains("$unread input bytes"), e.message)
+        // Part of the remainder would end the stream without the rest.
+        assertFailsWith<IllegalStateException> {
+            d.deflate(data, r.bytesConsumed, unread - 1, buf, 0, buf.size, finish = true)
+        }
+        assertFailsWith<IllegalStateException> { d.deflate(data, r.bytesConsumed, unread, buf, 0, buf.size) }
+    }
+
+    @Test
+    fun resetAfterPartialFinishStartsAFreshStream() {
+        val data = samples().first { it.first == "random" }.second
+        val d = Deflater()
+        val buf = ByteArray(1000)
+        assertTrue(d.deflate(data, 0, data.size, buf, 0, buf.size, finish = true).bytesConsumed < data.size)
+        d.reset()
+        val small = byteArrayOf(1, 2, 3)
+        val out = Sink()
+        // Input beyond the old stream's remainder, and a call without finish, are allowed again.
+        out.write(buf, d.deflate(small, 0, small.size, buf, 0, buf.size).bytesProduced)
+        do {
+            val r = d.deflate(EMPTY_INPUT, 0, 0, buf, 0, buf.size, finish = true)
+            out.write(buf, r.bytesProduced)
+        } while (!r.streamEnd)
+        assertContentEquals(small, decompress(out.toByteArray()).first)
     }
 
     @Test

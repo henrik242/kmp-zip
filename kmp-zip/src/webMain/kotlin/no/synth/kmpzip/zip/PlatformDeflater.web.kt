@@ -7,13 +7,7 @@ internal actual class PlatformDeflater actual constructor() {
     private var deflater: Deflater? = null
 
     actual fun init(level: Int, nowrap: Boolean, gzip: Boolean) {
-        // gzip wins over nowrap, as on the other targets.
-        val format = when {
-            gzip -> ZlibFormat.GZIP
-            nowrap -> ZlibFormat.RAW
-            else -> ZlibFormat.ZLIB
-        }
-        deflater = Deflater(level, format)
+        deflater = Deflater(level, zlibFormat(nowrap, gzip))
     }
 
     actual fun deflate(
@@ -30,9 +24,21 @@ internal actual class PlatformDeflater actual constructor() {
         return DeflateResult(r.bytesConsumed, r.bytesProduced, r.streamEnd)
     }
 
+    actual fun reset() {
+        val d = deflater ?: throw IllegalStateException("Deflater not initialized")
+        d.reset()
+    }
+
     actual fun end() {
         deflater = null
     }
 
     actual val isFinished: Boolean get() = deflater?.isFinished ?: true
+}
+
+// gzip wins over nowrap, as on the other targets.
+internal fun zlibFormat(nowrap: Boolean, gzip: Boolean): ZlibFormat = when {
+    gzip -> ZlibFormat.GZIP
+    nowrap -> ZlibFormat.RAW
+    else -> ZlibFormat.ZLIB
 }

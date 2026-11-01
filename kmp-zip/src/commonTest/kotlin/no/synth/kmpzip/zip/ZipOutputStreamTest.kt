@@ -30,6 +30,32 @@ class ZipOutputStreamTest {
     }
 
     @Test
+    fun deflaterReusedAcrossEntriesAndLevelsRoundTrips() {
+        // One deflater is reset between entries at the same level and replaced when the
+        // level changes; each entry must still be a complete, independent stream.
+        val text = "The quick brown fox jumps over the lazy dog. ".repeat(200).encodeToByteArray()
+        val random = kotlin.random.Random(1).nextBytes(5000)
+        val plan = listOf(6 to text, 6 to random, 6 to ByteArray(0), 0 to text, 9 to text, 9 to random, -1 to text)
+        val zip = createZip { zos ->
+            plan.forEachIndexed { i, (level, data) ->
+                zos.setLevel(level)
+                zos.putNextEntry(ZipEntry("e$i"))
+                zos.write(data)
+                zos.closeEntry()
+            }
+        }
+        val entries = readEntries(zip)
+        assertEquals(plan.size, entries.size)
+        entries.forEachIndexed { i, (name, data) ->
+            assertEquals("e$i", name)
+            assertContentEquals(plan[i].second, data, name)
+        }
+        val sizes = ZipFile(zip).use { z -> z.entries.associate { it.name to it.compressedSize } }
+        assertTrue(sizes.getValue("e3") > text.size, "level 0 stores")
+        assertTrue(sizes.getValue("e4") < text.size / 10, "level 9 compresses")
+    }
+
+    @Test
     fun flushPassesBufferedBytesThrough() {
         val baos = ByteArrayOutputStream()
         val zos = ZipOutputStream(baos)

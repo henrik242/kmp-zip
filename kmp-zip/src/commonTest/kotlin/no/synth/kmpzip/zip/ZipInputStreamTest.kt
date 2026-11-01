@@ -489,8 +489,23 @@ class ZipInputStreamTest {
     @Test
     fun truncatedAtEntryBoundaryThrows() {
         val bytes = abcZip()
-        val truncated = bytes.copyOf(lastIndexOfSig(bytes, 3, 4))
-        assertFailsWith<ZipFormatException> { entryNames(truncated) }
+        val last = lastIndexOfSig(bytes, 3, 4)
+        val e = assertFailsWith<ZipFormatException> { entryNames(bytes.copyOf(last)) }
+        assertTrue(e.message.orEmpty().startsWith("Truncated ZIP"), e.message)
+        // Cut inside the next signature.
+        for (extra in 1..3) {
+            assertFailsWith<ZipFormatException> { entryNames(bytes.copyOf(last + extra)) }
+        }
+    }
+
+    @Test
+    fun truncatedInsideDataDescriptorThrows() {
+        val bytes = abcZip()
+        // Entry c's descriptor: the last one, just before the central directory.
+        val descriptor = lastIndexOfSig(bytes, 7, 8)
+        for (cut in listOf(2, 6, 10)) {
+            assertFailsWith<ZipFormatException> { entryNames(bytes.copyOf(descriptor + cut)) }
+        }
     }
 
     @Test

@@ -79,6 +79,11 @@ class ZipOutputStream @JvmOverloads constructor(
     private var entryOffset: Long = 0
     private var entryZip64 = false
     private var deflater: PlatformDeflater? = null
+    // The last finished entry's deflater, kept for the next DEFLATED entry at the same
+    // level: a reset is much cheaper than allocating new state, above all on js/wasmJs.
+    private var spareDeflater: PlatformDeflater? = null
+    private var spareLevel = 0
+    private var deflaterLevel = 0
     private val deflateBuf = ByteArray(8192)
 
     // Encryption state for the current entry
@@ -194,7 +199,8 @@ class ZipOutputStream @JvmOverloads constructor(
             null
         }
         if (method == ZipConstants.DEFLATED) {
-            deflater = PlatformDeflater().also { it.init(level) }
+            deflater = takeDeflater(level)
+            deflaterLevel = level
         }
 
         val compressedSize = if (entrySizesInHeader) entry.size + entryOverhead else 0L
@@ -369,7 +375,7 @@ class ZipOutputStream @JvmOverloads constructor(
             failed = true
             throw e
         } finally {
-            deflater?.end()
+            deflater?.let { if (failed) it.end() else keepDeflater(it, deflaterLevel) }
             deflater = null
             aesCipher = null
             legacyCipher = null
@@ -444,6 +450,8 @@ class ZipOutputStream @JvmOverloads constructor(
         check(!failed) { "An earlier entry failed; the archive cannot be finished" }
         if (currentEntry != null) closeEntry()
         finished = true
+        // No more entries: free the spare's native state now, in case close() never comes.
+        releaseSpareDeflater()
 
         val centralDirOffset = bytesWritten
 
@@ -568,6 +576,7 @@ class ZipOutputStream @JvmOverloads constructor(
                 closed = true
                 deflater?.end()
                 deflater = null
+                releaseSpareDeflater()
                 output.close()
             }
         }
@@ -599,6 +608,27 @@ class ZipOutputStream @JvmOverloads constructor(
 
         /** Central ZIP64 field with uncompressed size, compressed size and offset. */
         const val ZIP64_CD_EXTRA_MAX_SIZE = 4 + 3 * 8
+    }
+
+    private fun takeDeflater(level: Int): PlatformDeflater {
+        val spare = spareDeflater
+        spareDeflater = null
+        if (spare != null) {
+            if (spareLevel == level) return spare.also { it.reset() }
+            spare.end()
+        }
+        return PlatformDeflater().also { it.init(level) }
+    }
+
+    private fun releaseSpareDeflater() {
+        spareDeflater?.end()
+        spareDeflater = null
+    }
+
+    private fun keepDeflater(d: PlatformDeflater, level: Int) {
+        spareDeflater?.end()
+        spareDeflater = d
+        spareLevel = level
     }
 
     // -- Low-level writing helpers --

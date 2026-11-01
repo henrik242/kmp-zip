@@ -13,7 +13,7 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 | Artifact | Description |
 |----------|-------------|
 | `no.synth:kmp-zip` | Core I/O, ZIP, and GZIP streams |
-| `no.synth:kmp-zlib` | Pure-Kotlin zlib (raw DEFLATE, zlib, gzip) ported from pako. kmp-zip uses it on js and wasmJs only. It builds for every target, but on JVM, Android and native the platform zlib is faster. One `Deflater`/`Inflater` per stream; they are not thread-safe. MIT and Zlib licenses. |
+| `no.synth:kmp-zlib` | Pure-Kotlin zlib (raw DEFLATE, zlib, gzip) ported from pako. kmp-zip uses it on js and wasmJs only. It builds for JVM (also usable from Android) and every native target too, but there the platform zlib is faster. One `Deflater`/`Inflater` per stream; they are not thread-safe. MIT and Zlib licenses. |
 | `no.synth:kmp-zip-kotlinx` | [kotlinx-io](https://github.com/Kotlin/kotlinx-io) `Source`/`Sink` adapters (both directions) for the core streams |
 | `no.synth:kmp-zip-okio` | [OkIO](https://square.github.io/okio/) `BufferedSource`/`BufferedSink`/`Source`/`Sink` adapters (both directions) for the core streams |
 | `kmp-zip-cli` | Command-line tool for ZIP/GZIP operations — ships as standalone native binaries on macOS / Linux / Windows, with a JVM fallback. Not published to Maven Central. |
@@ -45,7 +45,8 @@ That builds the bundle, starts a webpack dev server on `http://localhost:8080`, 
 
 ### Runtime caveats:
 
-- **No npm dependencies.** Deflate/inflate comes from `kmp-zlib`, a pure-Kotlin port of pako, pulled in as an ordinary Maven dependency.
+- **No npm dependencies.** Deflate/inflate comes from `kmp-zlib`, a pure-Kotlin port of pako, pulled in as an ordinary Maven dependency. If you upgraded from a version that used pako, `./gradlew kotlinUpgradeYarnLock` drops it from your `yarn.lock`.
+- **Bundles include MIT- and Zlib-licensed code.** `kmp-zlib` is a port of pako (MIT) and zlib (Zlib license). Its jars carry the notices in `META-INF/LICENSE`, but a js/wasmJs bundle does not; if you ship one, include [`kmp-zlib/LICENSE`](kmp-zlib/LICENSE) with your third-party notices.
 - **`fileSeekableSource` is Node-only, and on `js` it breaks browser bundling.** It binds Node's `node:fs`, which a bundler resolves statically: on `js`, merely referencing `fileSeekableSource` from code reachable in a browser bundle fails the build with `Can't resolve 'node:fs'`. Keep it behind a Node-only entry point, or use `ByteArraySeekableSource` in the browser. Unreachable references are dropped cleanly on both targets.
 - **`Crypto.randomBytes` requires Web Crypto.** Calls `globalThis.crypto.getRandomValues`, which is available in any browser context (HTTPS *or* plain `http://`) and Node 20+. If the runtime doesn't expose Web Crypto — sandboxed JS realms, browsers with Web Crypto disabled by policy — the call throws `IllegalStateException` naming the likely cause.
 - **Long-running compression blocks the UI thread.** The codec is synchronous; deflating a multi-MB archive on the main browser thread can stall rendering for hundreds of ms. For anything beyond small archives, run kmp-zip in a `DedicatedWorker`. Neither target depends on `window`/`document`, so a worker works without extra setup.
@@ -120,8 +121,8 @@ kotlin {
 
 | Type | Description |
 |------|-------------|
-| `ZipInputStream(InputStream, password?)` | Reads ZIP entries — `nextEntry`, `closeEntry()`, `read()`, `readBytes()`. Pass a password (`ByteArray` or `String`) to decrypt encrypted entries (auto-detects AES or legacy). |
-| `ZipInputStream(ByteArray, password?)` | Convenience factory |
+| `ZipInputStream(InputStream, password?, verifyCentralDirectory?)` | Reads ZIP entries — `nextEntry`, `closeEntry()`, `read()`, `readBytes()`. Pass a password (`ByteArray` or `String`) to decrypt encrypted entries (auto-detects AES or legacy). `nextEntry` throws `ZipFormatException` if the input ends, or an unknown `PK` record follows, before the central directory. With `verifyCentralDirectory = true` (pass it by name), it also reads the central directory when the entries end and checks it against them; see [Verify a streamed ZIP](#verify-a-streamed-zip). |
+| `ZipInputStream(ByteArray, password?, verifyCentralDirectory?)` | Convenience factory |
 | `ZipFile(SeekableSource, password?)` | Random-access reader — parses the central directory, then `getEntry(name)` / `entries` / `getInputStream(entry)` seek straight to one entry without streaming the whole archive. Decrypts AES and legacy entries like `ZipInputStream`. Reads ZIP64. |
 | `ZipFile(ByteArray, password?)` | Convenience factory |
 | `ZipOutputStream(OutputStream, password?, encryption?, aesStrength?)` | Writes ZIP entries — `putNextEntry()`, `closeEntry()`, `write()`, `finish()`, `setMethod()`, `setLevel()`. Pass a password to encrypt all entries. Writes ZIP64 records where needed (entries or offsets of 4 GiB or more, 65535+ entries); set `ZipEntry.size` up front on a DEFLATED entry known to be that large. Entries are streamed, encrypted ones included. A STORED entry needs `size` and `crc` set before `putNextEntry` (AE-2 only `size`). |
@@ -392,6 +393,47 @@ val text = InflateInputStream(compressed).use { iis ->
 }
 ```
 
+### Verify a streamed ZIP
+
+`ZipInputStream` streams without seeking, so by default it never reads the central directory. To catch dropped or damaged entries anyway, verify the central directory and read every entry (reading checks each entry's CRC-32 or AES auth code):
+
+```kotlin
+ZipInputStream(zipBytes, verifyCentralDirectory = true).use { zis ->
+    while (true) {
+        val entry = zis.nextEntry ?: break // throws ZipFormatException on a mismatch
+        zis.readBytes()
+    }
+}
+```
+
+For seekable input, `ZipFile` reads the central directory directly.
+
+### kmp-zlib: Deflater and Inflater
+
+`no.synth:kmp-zlib` can also be used on its own, on every target. `Deflater` and `Inflater` work on byte array slices and report how much they consumed and produced:
+
+```kotlin
+import no.synth.kmpzlib.Deflater
+import no.synth.kmpzlib.Inflater
+import no.synth.kmpzlib.ZlibFormat
+
+val deflater = Deflater(level = 6, format = ZlibFormat.GZIP)
+val buf = ByteArray(16 * 1024)
+var off = 0
+do {
+    // With finish = true, pass all input not yet consumed: a finishing deflater treats
+    // what it is given as the last input. Keep calling until the stream ends.
+    val r = deflater.deflate(data, off, data.size - off, buf, 0, buf.size, finish = true)
+    off += r.bytesConsumed
+    out.write(buf, 0, r.bytesProduced)
+} while (!r.streamEnd)
+
+val inflater = Inflater(ZlibFormat.GZIP)
+// inflate(...) likewise, until streamEnd; it throws ZlibDataException on corrupt data.
+```
+
+`Crc32` computes CRC-32 like `java.util.zip.CRC32`. On the JVM, mind the imports: `Deflater` and `Inflater` share their names with `java.util.zip`.
+
 ### kotlinx-io: read/write ZIPs via Source/Sink
 
 ```kotlin
@@ -658,10 +700,13 @@ To run the JVM tests on a real JDK 8 (it must already be installed):
 ./gradlew -p scripts/java8-consumer run -PkmpzipVersion=2.0.0
 ```
 
-The kmp-zlib throughput benchmark is skipped unless `-Pkmpzlib.bench` is set:
+The kmp-zlib throughput benchmark is skipped unless `-Pkmpzlib.bench` is set. It prints MB/s to stdout and always reruns. Any kmp-zlib test task works, e.g. on js, wasmJs or native:
 
 ```sh
 ./gradlew :kmp-zlib:jvmTest -Pkmpzlib.bench
+./gradlew :kmp-zlib:jsNodeTest -Pkmpzlib.bench
+./gradlew :kmp-zlib:wasmJsNodeTest -Pkmpzlib.bench
+./gradlew :kmp-zlib:linuxX64Test -Pkmpzlib.bench
 ```
 
 ## Publishing

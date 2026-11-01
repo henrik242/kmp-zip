@@ -17,11 +17,7 @@ public class ZlibDataException(message: String) : Exception(message)
  */
 public class Inflater @JvmOverloads constructor(public val format: ZlibFormat = ZlibFormat.ZLIB) {
     private val strm = ZStream()
-    private val state: InflateState
-
-    init {
-        state = inflateInit2(strm, format.windowBits())
-    }
+    private val state: InflateState = inflateInit2(strm, format.windowBits())
 
     /** True once the end of the compressed stream has been reached. */
     public var isFinished: Boolean = false

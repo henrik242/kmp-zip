@@ -61,6 +61,13 @@ internal actual class PlatformDeflater actual constructor() {
         }
     }
 
+    actual fun reset() {
+        val s = stream ?: throw IllegalStateException("Deflater not initialized")
+        val ret = deflateReset(s.ptr)
+        if (ret != Z_OK) throw IllegalStateException("deflateReset failed: $ret")
+        finished = false
+    }
+
     actual fun end() {
         stream?.let {
             deflateEnd(it.ptr)

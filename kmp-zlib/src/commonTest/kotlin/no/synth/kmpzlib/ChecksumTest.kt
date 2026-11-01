@@ -84,4 +84,23 @@ class ChecksumTest {
             assertEquals((b shl 16) or a, adler32(start, data, n, 0), "n $n from max")
         }
     }
+
+    @Test
+    fun publicCrc32MatchesIncrementalAndReference() {
+        val data = Random(3).nextBytes(10_000)
+        val whole = Crc32().apply { update(data) }
+        val parts = Crc32()
+        var off = 0
+        for (n in listOf(1, 2, 3, 4, 5, 1000, 8985)) {
+            parts.update(data, off, n)
+            off += n
+        }
+        val expected = crcBitwise(data).toLong() and 0xFFFFFFFFL
+        assertEquals(expected, whole.value)
+        assertEquals(expected, parts.value)
+        whole.reset()
+        assertEquals(0L, whole.value)
+        whole.update("123456789".encodeToByteArray())
+        assertEquals(0xCBF43926L, whole.value)
+    }
 }

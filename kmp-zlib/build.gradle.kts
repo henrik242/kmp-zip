@@ -53,7 +53,9 @@ kotlin {
 val bench = providers.gradleProperty("kmpzlib.bench").isPresent
 tasks.withType<AbstractTestTask>().configureEach {
     filter.apply {
-        isFailOnNoMatchingTests = false
+        // Only needed for bench runs, where most test tasks have nothing to include.
+        // Elsewhere a mistyped --tests filter should still fail.
+        if (bench) isFailOnNoMatchingTests = false
         if (bench) includeTestsMatching("*ZlibBenchmark*") else excludeTestsMatching("*ZlibBenchmark*")
     }
     if (bench) {

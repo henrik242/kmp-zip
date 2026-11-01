@@ -19,6 +19,8 @@ internal expect class PlatformDeflater() {
         output: ByteArray, outputOffset: Int, outputLen: Int,
         finish: Boolean = false,
     ): DeflateResult
+    /** Starts a new stream with the settings given to [init]. */
+    fun reset()
     fun end()
     val isFinished: Boolean
 }
