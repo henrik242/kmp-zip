@@ -30,7 +30,8 @@ public class CodecResult(
  * Call [deflate] with any slice of input and room for output; it consumes what it can
  * and reports how far it got. Output can be held back between calls, so after the input
  * is used up keep calling while the output buffer fills. To end the stream, call with
- * `finish = true` until [CodecResult.streamEnd] is true, passing no further input.
+ * `finish = true` until [CodecResult.streamEnd] is true. If such a call leaves input
+ * unread, pass the rest in the next call; once all input is consumed, pass no more.
  *
  * Not thread-safe; use one instance per stream.
  *
@@ -53,6 +54,7 @@ public class Deflater @JvmOverloads constructor(
         private set
 
     private var finishing = false
+    private var inputDone = false
 
     @JvmOverloads
     @Throws(IllegalStateException::class, IndexOutOfBoundsException::class)
@@ -63,8 +65,8 @@ public class Deflater @JvmOverloads constructor(
     ): CodecResult {
         checkRange(input, inputOffset, inputLength)
         checkRange(output, outputOffset, outputLength)
-        if (finishing && (inputLength > 0 || !finish)) {
-            throw IllegalStateException("Deflater is finishing; call with finish = true and no input")
+        if (finishing && (!finish || (inputDone && inputLength > 0))) {
+            throw IllegalStateException("Deflater is finishing; call with finish = true and no new input")
         }
         if (finish) finishing = true
 
@@ -86,6 +88,7 @@ public class Deflater @JvmOverloads constructor(
             Z_STREAM_END -> isFinished = true
             else -> throw IllegalStateException("deflate failed: $ret ${strm.msg}")
         }
+        if (finish && strm.availIn == 0) inputDone = true
         return CodecResult(inputLength - strm.availIn, outputLength - strm.availOut, isFinished)
     }
 
@@ -94,6 +97,7 @@ public class Deflater @JvmOverloads constructor(
         deflateReset(state)
         isFinished = false
         finishing = false
+        inputDone = false
     }
 
     public companion object {
