@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+import org.jetbrains.kotlin.gradle.targets.js.testing.KotlinJsTest
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
@@ -46,6 +47,22 @@ kotlin {
             }
         }
     }
+}
+
+// ZlibBenchmark only runs with -Pkmpzlib.bench, and then alone.
+val bench = providers.gradleProperty("kmpzlib.bench").isPresent
+tasks.withType<AbstractTestTask>().configureEach {
+    filter.apply {
+        isFailOnNoMatchingTests = false
+        if (bench) includeTestsMatching("*ZlibBenchmark*") else excludeTestsMatching("*ZlibBenchmark*")
+    }
+    if (bench) {
+        testLogging.showStandardStreams = true
+        outputs.upToDateWhen { false }
+    }
+}
+if (bench) {
+    tasks.withType<KotlinJsTest>().configureEach { useMocha { timeout = "0" } }
 }
 
 // The MIT and zlib licenses require their notices to travel with the code.
