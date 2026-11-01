@@ -658,6 +658,12 @@ To run the JVM tests on a real JDK 8 (it must already be installed):
 ./gradlew -p scripts/java8-consumer run -PkmpzipVersion=2.0.0
 ```
 
+The kmp-zlib throughput benchmark is skipped unless `-Pkmpzlib.bench` is set:
+
+```sh
+./gradlew :kmp-zlib:jvmTest -Pkmpzlib.bench
+```
+
 ## Publishing
 
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:

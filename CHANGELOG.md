@@ -15,6 +15,9 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 ### Changed
 - js and wasmJs deflate/inflate with kmp-zlib instead of the pako npm package, so
   kmp-zip no longer has npm dependencies. Compressed output is the same as pako's.
+- kmp-zlib is faster: CRC-32 about 2x on JVM and js, long and repetitive matches
+  inflate up to 2x faster on JVM and wasmJs, and deflate is slightly faster.
+  Compressed output is unchanged.
 
 ### Fixed
 - `ZipInputStream.nextEntry` throws `ZipFormatException` when the input ends after an
