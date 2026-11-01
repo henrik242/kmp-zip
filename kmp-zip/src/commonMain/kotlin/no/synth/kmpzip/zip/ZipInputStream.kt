@@ -46,23 +46,38 @@ internal fun parseAesExtraFieldOrThrow(extra: ByteArray?): AesExtraField? =
  * 256 MiB, and its auth code or CRC catches a wrong guess. [ZipFile] reads both, using
  * the sizes from the central directory.
  *
+ * **Truncation.** [nextEntry] throws [ZipFormatException] when the input ends after an
+ * entry, or an entry is followed by an unknown `PK` record, where `java.util.zip` returns
+ * `null`. Data without a `PK` signature, such as an APK Signing Block, still ends the
+ * entries.
+ *
  * **Verifying the central directory.** By default [nextEntry] returns `null` at the
  * central directory without reading it. With `verifyCentralDirectory`, it reads the
  * central directory through the end-of-central-directory record and checks it against
  * the entries returned: entry count, names, local header offsets (relative to the start
  * of the stream), and CRC-32 and sizes. A missing, truncated or mismatched central
  * directory throws [ZipFormatException]. Combined with reading every entry, this catches
- * dropped or damaged entries without seeking.
+ * dropped or damaged entries without seeking. Pass it by name:
+ * `ZipInputStream(input, verifyCentralDirectory = true)`.
  *
  * @param input the underlying input stream
  * @param password optional password for decrypting encrypted entries (as UTF-8 bytes)
  * @param verifyCentralDirectory read and check the central directory when the entries end
  */
-class ZipInputStream @JvmOverloads constructor(
+class ZipInputStream(
     private val input: InputStream,
     private val password: ByteArray? = null,
-    private val verifyCentralDirectory: Boolean = false,
+    // No default: the (input, password) signature stays the secondary constructor's, so
+    // code compiled against 2.0.0 still links on native, js and wasmJs.
+    private val verifyCentralDirectory: Boolean,
 ) : InputStream() {
+    /**
+     * @param input the underlying input stream
+     * @param password optional password for decrypting encrypted entries (as UTF-8 bytes)
+     */
+    @JvmOverloads
+    constructor(input: InputStream, password: ByteArray? = null) : this(input, password, false)
+
     private var currentEntry: ZipEntry? = null
     private var closed = false
     private var entryEof = true
@@ -175,6 +190,16 @@ class ZipInputStream @JvmOverloads constructor(
         return result
     }
 
+    /**
+     * Closes the current entry and reads the next entry's local header, or returns `null`
+     * when the entries end. Throws the same exception again on every call after a failed
+     * central directory check.
+     *
+     * @throws ZipFormatException if the archive is malformed or truncated, or, with
+     *   `verifyCentralDirectory`, the central directory does not match the entries
+     * @throws ZipUnsupportedFeatureException for archives that cannot be read as a stream
+     * @throws IOException if the underlying stream fails
+     */
     val nextEntry: ZipEntry?
         get() {
             if (closed) throw IllegalStateException("Stream closed")
@@ -201,7 +226,7 @@ class ZipInputStream @JvmOverloads constructor(
                     sig != ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE &&
                     sig != ZipConstants.END_OF_CENTRAL_DIR_SIGNATURE
                 ) {
-                    throw ZipFormatException("Not a ZIP file: bad signature 0x${sig.toUInt().toString(16).padStart(8, '0')}")
+                    throw ZipFormatException("Not a ZIP file: bad signature ${sig.toSignatureHex()}")
                 }
             }
             if (sig == ZipConstants.LOCAL_FILE_HEADER_SIGNATURE) {
@@ -219,11 +244,12 @@ class ZipInputStream @JvmOverloads constructor(
             // the entries, as in java.util.zip: an APK Signing Block or padding may sit
             // between the last entry and the central directory. Verifying, only an APK
             // Signing Block may.
-            val pk = sig and 0xFFFF == 0x4b50
+            val sigOffset = position - 4
             val knownEnd = sig in END_OF_ENTRIES_SIGS
-            val apkBlock = !knownEnd && (pk || verifyCentralDirectory) && skipApkSigningBlock(sig)
-            if (!knownEnd && !apkBlock && (pk || verifyCentralDirectory)) {
-                throw ZipFormatException("Bad header signature 0x${sig.toUInt().toString(16).padStart(8, '0')}")
+            val mustBeKnown = !knownEnd && (sig and 0xFFFF == 0x4b50 || verifyCentralDirectory)
+            val apkBlock = mustBeKnown && skipApkSigningBlock(sig)
+            if (mustBeKnown && !apkBlock) {
+                throw ZipFormatException("Bad header signature ${sig.toSignatureHex()} at offset $sigOffset")
             }
             entriesEnded = true
             if (verifyCentralDirectory) {
@@ -252,18 +278,15 @@ class ZipInputStream @JvmOverloads constructor(
      */
     private fun readAndVerifyCentralDirectory(firstSig: Int) {
         val cdStart = position - 4
-        var sig = firstSig
-        if (sig == ZipConstants.ARCHIVE_EXTRA_DATA_SIGNATURE) {
+        if (firstSig == ZipConstants.ARCHIVE_EXTRA_DATA_SIGNATURE) {
             throw ZipUnsupportedFeatureException("Encrypted central directory cannot be verified")
         }
-
+        var sig = firstSig
         var cdCount = 0L
         while (sig == ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE) {
-            // The signature, already read, is left as zeros: the parser skips it.
-            val fixed = ByteArray(CD_FIXED_LEN)
-            readExact(CD_FIXED_LEN - 4).copyInto(fixed, 4)
-            val header = fixed + readExact(centralDirectoryHeaderLength(fixed, 0) - CD_FIXED_LEN)
-            val cd = parseCentralDirectoryHeader(header, 0)
+            val cd = parseCentralDirectoryHeader(readRecordAfterSignature(CD_FIXED_LEN) { fixed ->
+                centralDirectoryHeaderLength(fixed, 0)
+            }, 0)
             verifyAgainstLocal(cd.entry, cd.localHeaderOffset)
             cdCount++
             sig = readLeInt()
@@ -274,53 +297,68 @@ class ZipInputStream @JvmOverloads constructor(
         }
         val cdSize = position - 4 - cdStart
 
-        // ZIP64 end-of-central-directory record and locator, if present, precede the EOCD.
-        var zip64: LongArray? = null
-        if (sig == ZipConstants.ZIP64_END_OF_CENTRAL_DIR_SIGNATURE) {
-            val recordStart = position - 4
-            val record = readExact(ZIP64_EOCD_MIN_LEN - 4)
-            val recordSize = readLeLong(record, 0)
-            if (recordSize < ZIP64_EOCD_MIN_LEN - 12) throw ZipFormatException("ZIP64 end-of-central-directory record too short")
-            skipExact(recordSize - (ZIP64_EOCD_MIN_LEN - 12))
-            // this disk, CD start disk, entries on this disk, total entries, CD size, CD offset
-            zip64 = longArrayOf(
-                readLeUInt(record, 12), readLeUInt(record, 16), readLeLong(record, 20),
-                readLeLong(record, 28), readLeLong(record, 36), readLeLong(record, 44),
-            )
-            if (readLeInt() != ZipConstants.ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE) {
-                throw ZipFormatException("ZIP64 end-of-central-directory locator not found")
-            }
-            val locator = readExact(16)
-            if (readLeUInt(locator, 0) != 0L || readLeLong(locator, 4) != recordStart || readLeUInt(locator, 12) > 1) {
-                throw ZipFormatException("ZIP64 end-of-central-directory locator does not match its record")
-            }
-            sig = readLeInt()
+        // A ZIP64 end-of-central-directory record and locator, if present, precede the EOCD.
+        val zip64 = if (sig == ZipConstants.ZIP64_END_OF_CENTRAL_DIR_SIGNATURE) {
+            readZip64EndOfCentralDirectory().also { sig = readLeInt() }
+        } else {
+            null
         }
         if (sig != ZipConstants.END_OF_CENTRAL_DIR_SIGNATURE) {
             throw ZipFormatException(
-                "Expected end of central directory, found 0x${sig.toUInt().toString(16).padStart(8, '0')}"
+                "Expected end of central directory at offset ${position - 4}, found ${sig.toSignatureHex()}"
             )
         }
-        val eocd = readExact(18)
-        readExact(readLeShort(eocd, 16)) // comment
+        val eocd = readRecordAfterSignature(EOCD_MIN_LEN) { fixed -> EOCD_MIN_LEN + readLeShort(fixed, 20) }
+        verifyEnd(zip64 ?: parseEndOfCentralDirectory(eocd, 0), zip64 != null, cdCount, cdSize, cdStart)
+    }
 
-        val values = zip64 ?: longArrayOf(
-            readLeShort(eocd, 0).toLong(), readLeShort(eocd, 2).toLong(), readLeShort(eocd, 4).toLong(),
-            readLeShort(eocd, 6).toLong(), readLeUInt(eocd, 8), readLeUInt(eocd, 12),
-        )
-        if (values[0] != 0L || values[1] != 0L) {
+    /**
+     * Reads the rest of a record whose 4-byte signature was just read: [fixedLen] bytes
+     * including the signature, then up to [totalLen] of them. The signature is left as
+     * zeros in the result; the parsers skip it.
+     */
+    private inline fun readRecordAfterSignature(fixedLen: Int, totalLen: (ByteArray) -> Int): ByteArray {
+        val fixed = ByteArray(fixedLen)
+        readExact(fixedLen - 4).copyInto(fixed, 4)
+        return fixed + readExact(totalLen(fixed) - fixedLen)
+    }
+
+    /** Reads the ZIP64 end-of-central-directory record, its signature just read, and its locator. */
+    private fun readZip64EndOfCentralDirectory(): EndOfCentralDirectory {
+        val recordStart = position - 4
+        val record = readRecordAfterSignature(ZIP64_EOCD_MIN_LEN) { ZIP64_EOCD_MIN_LEN }
+        val recordSize = readLeLong(record, 4)
+        val minSize = ZIP64_EOCD_MIN_LEN - ZIP64_EOCD_SIZE_FIELD_END
+        if (recordSize < minSize) throw ZipFormatException("ZIP64 end-of-central-directory record too short")
+        skipExact(recordSize - minSize) // extensible data
+        if (readLeInt() != ZipConstants.ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE) {
+            throw ZipFormatException("ZIP64 end-of-central-directory locator not found")
+        }
+        val locator = readRecordAfterSignature(ZIP64_LOCATOR_LEN) { ZIP64_LOCATOR_LEN }
+        val recordDisk = readLeUInt(locator, 4)
+        val recordOffset = readLeLong(locator, 8)
+        val totalDisks = readLeUInt(locator, 16)
+        if (recordDisk != 0L || recordOffset != recordStart || totalDisks > 1) {
+            throw ZipFormatException("ZIP64 end-of-central-directory locator does not match its record")
+        }
+        return parseZip64EndOfCentralDirectory(record, 0)
+    }
+
+    /** Checks the end-of-central-directory values against what was read. */
+    private fun verifyEnd(end: EndOfCentralDirectory, zip64: Boolean, cdCount: Long, cdSize: Long, cdStart: Long) {
+        if (end.diskNumber != 0L || end.cdStartDisk != 0L) {
             throw ZipUnsupportedFeatureException("Split/spanned ZIP archives are not supported")
         }
         // Without ZIP64, more than 65535 entries leave a wrapped 16-bit count.
-        val expectedCount = if (zip64 != null) cdCount else cdCount and 0xFFFF
-        if (values[2] != expectedCount || values[3] != expectedCount) {
+        val expectedCount = if (zip64) cdCount else cdCount and 0xFFFF
+        if (end.diskEntries != expectedCount || end.totalEntries != expectedCount) {
             throw ZipFormatException(
-                "End of central directory declares ${values[3]} entries, central directory has $cdCount"
+                "End of central directory declares ${end.totalEntries} entries, central directory has $cdCount"
             )
         }
-        if (values[4] != cdSize || values[5] != cdStart) {
+        if (end.cdSize != cdSize || end.cdOffset != cdStart) {
             throw ZipFormatException(
-                "End of central directory declares size ${values[4]} at offset ${values[5]}, " +
+                "End of central directory declares size ${end.cdSize} at offset ${end.cdOffset}, " +
                     "found size $cdSize at offset $cdStart"
             )
         }
@@ -332,7 +370,10 @@ class ZipInputStream @JvmOverloads constructor(
 
     private fun verifyAgainstLocal(cd: ZipEntry, offset: Long) {
         val local = localEntries.remove(offset)
-            ?: throw ZipFormatException("No local entry at offset $offset for central directory entry: ${cd.name}")
+            ?: throw ZipFormatException(
+                "No local entry at offset $offset for central directory entry: ${cd.name}" +
+                    " (offsets count from the start of the stream; is there data before the archive?)"
+            )
         fun mismatch(what: String): Nothing =
             throw ZipFormatException("Central directory $what does not match local entry: ${cd.name}")
         if (local.name != cd.name) mismatch("name")
@@ -345,7 +386,7 @@ class ZipInputStream @JvmOverloads constructor(
     private fun skipExact(n: Long) {
         val start = position
         skipRaw(n)
-        if (position - start < n) throw ZipFormatException("Unexpected end of ZIP stream")
+        if (position - start < n) throw ZipFormatException("Unexpected end of ZIP stream at offset $position")
     }
 
     /**
@@ -1022,7 +1063,7 @@ class ZipInputStream @JvmOverloads constructor(
 
     private fun readByte(): Int {
         val b = readRawByte()
-        if (b == -1) throw ZipFormatException("Unexpected end of ZIP stream")
+        if (b == -1) throw ZipFormatException("Unexpected end of ZIP stream at offset $position")
         return b
     }
 
@@ -1031,7 +1072,7 @@ class ZipInputStream @JvmOverloads constructor(
         var offset = 0
         while (offset < n) {
             val read = readRaw(buf, offset, n - offset)
-            if (read == -1) throw ZipFormatException("Unexpected end of ZIP stream")
+            if (read == -1) throw ZipFormatException("Unexpected end of ZIP stream at offset $position")
             if (read == 0) {
                 throw NoProgressException("Source returned no data while reading the ZIP structure")
             }
@@ -1160,11 +1201,6 @@ class ZipInputStream @JvmOverloads constructor(
         // Real blocks are a few KiB. Bounds how far garbage after "PK" is skipped.
         private const val MAX_APK_SIG_BLOCK_SIZE = 16L * 1024 * 1024
 
-        private const val DIGITAL_SIGNATURE_SIGNATURE = 0x05054b50
-
-        /** Fixed-size portion of a ZIP64 end-of-central-directory record. */
-        private const val ZIP64_EOCD_MIN_LEN = 56
-
         // Records that may follow the last entry.
         private val END_OF_ENTRIES_SIGS = intArrayOf(
             ZipConstants.CENTRAL_DIR_HEADER_SIGNATURE,
@@ -1187,20 +1223,31 @@ class ZipInputStream @JvmOverloads constructor(
 
 /** Convenience constructor for reading a ZIP from a byte array. */
 @JvmOverloads
+fun ZipInputStream(data: ByteArray, password: ByteArray? = null): ZipInputStream =
+    ZipInputStream(data, password, verifyCentralDirectory = false)
+
+// A separate overload, not a default parameter, so the 2.0.0 one above keeps its klib
+// signature on native, js and wasmJs.
+/** Convenience constructor for reading a ZIP from a byte array; see [ZipInputStream]. */
 fun ZipInputStream(
     data: ByteArray,
     password: ByteArray? = null,
-    verifyCentralDirectory: Boolean = false,
-): ZipInputStream {
-    return ZipInputStream(no.synth.kmpzip.io.ByteArrayInputStream(data), password, verifyCentralDirectory)
-}
+    verifyCentralDirectory: Boolean,
+): ZipInputStream =
+    ZipInputStream(no.synth.kmpzip.io.ByteArrayInputStream(data), password, verifyCentralDirectory)
 
 /** Convenience constructor with string password. */
-fun ZipInputStream(input: InputStream, password: String): ZipInputStream {
-    return ZipInputStream(input, password.encodeToByteArray())
-}
+fun ZipInputStream(input: InputStream, password: String): ZipInputStream =
+    ZipInputStream(input, password.encodeToByteArray())
+
+/** Convenience constructor with string password; see [ZipInputStream]. */
+fun ZipInputStream(input: InputStream, password: String, verifyCentralDirectory: Boolean): ZipInputStream =
+    ZipInputStream(input, password.encodeToByteArray(), verifyCentralDirectory)
 
 /** Convenience constructor for reading a ZIP from a byte array with string password. */
-fun ZipInputStream(data: ByteArray, password: String): ZipInputStream {
-    return ZipInputStream(no.synth.kmpzip.io.ByteArrayInputStream(data), password.encodeToByteArray())
-}
+fun ZipInputStream(data: ByteArray, password: String): ZipInputStream =
+    ZipInputStream(data, password.encodeToByteArray())
+
+/** Convenience constructor for a byte array with string password; see [ZipInputStream]. */
+fun ZipInputStream(data: ByteArray, password: String, verifyCentralDirectory: Boolean): ZipInputStream =
+    ZipInputStream(data, password.encodeToByteArray(), verifyCentralDirectory)

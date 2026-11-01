@@ -2,10 +2,9 @@ package no.synth.kmpzlib
 
 // Ported from pako (src/zlib/deflate.mjs), itself a port of zlib's deflate.c.
 // Differences from pako: only the default strategy, only Z_NO_FLUSH and Z_FINISH, no
-// custom gzip header (the default one is always written), no preset dictionary, and
-// only pako 3's default (non-legacy) hash.
+// custom gzip header (the default one is always written), no preset dictionary, only
+// the default 32K window and memLevel 8, and only pako 3's default (non-legacy) hash.
 
-private const val MAX_MEM_LEVEL = 9
 private const val MIN_MATCH = 3
 private const val MAX_MATCH = 258
 private const val MIN_LOOKAHEAD = MAX_MATCH + MIN_MATCH + 1
@@ -54,11 +53,13 @@ private object Configuration {
     )
 }
 
+// zlib's defaults, the only settings used: a 32K window and memLevel 8.
+private const val W_BITS = 15
+private const val MEM_LEVEL = 8
+
 internal class DeflateState(
     val strm: ZStream,
     val level: Int,
-    windowBits: Int,
-    memLevel: Int,
     /** 0 raw, 1 zlib, 2 gzip; negated once the trailer has been written. */
     var wrap: Int,
 ) {
@@ -66,17 +67,21 @@ internal class DeflateState(
     /** Flush mode of the previous call; -1 after a call that filled the output, -2 when fresh. */
     var lastFlush = -2
 
-    val wBits = windowBits
+    val wBits = W_BITS
     val wSize = 1 shl wBits
     val wMask = wSize - 1
     val window = ByteArray(wSize * 2 + WINDOW_PADDING)
     var windowSize = 0
-    val prev = IntArray(wSize)
 
-    val hashBits = maxOf(memLevel + 7, 15)
+    // Hash chains hold window positions, which are below 2 * wSize = 65536, so they are
+    // stored as unsigned 16-bit values (read with `and 0xffff`), as pako's Uint16Array.
+    // That halves their memory against IntArray: 128 KB instead of 256 KB.
+    val prev = ShortArray(wSize)
+
+    val hashBits = MEM_LEVEL + 7
     val hashSize = 1 shl hashBits
     val hashMask = hashSize - 1
-    val head = IntArray(hashSize)
+    val head = ShortArray(hashSize)
 
     var blockStart = 0
     var matchLength = 0
@@ -104,7 +109,7 @@ internal class DeflateState(
     var heapMax = 0
     val depth = IntArray(2 * L_CODES + 1)
 
-    val litBufsize = 1 shl (memLevel + 6)
+    val litBufsize = 1 shl (MEM_LEVEL + 6)
     val pendingBufSize = litBufsize * 4
     val pendingBuf = ByteArray(pendingBufSize)
     var pendingOut = 0
@@ -120,29 +125,11 @@ internal class DeflateState(
     var biValid = 0
 }
 
-internal fun deflateInit2(
-    strm: ZStream,
-    level: Int,
-    windowBits: Int,
-    memLevel: Int,
-): DeflateState {
-    var lvl = level
-    var wbits = windowBits
-    var wrap = 1
-    if (lvl == -1) lvl = 6
-    if (wbits < 0) {
-        wrap = 0
-        wbits = -wbits
-    } else if (wbits > 15) {
-        wrap = 2
-        wbits -= 16
-    }
-    require(memLevel in 1..MAX_MEM_LEVEL) { "Invalid memLevel: $memLevel" }
-    require(wbits in 8..15 && !(wbits == 8 && wrap != 1)) { "Invalid windowBits: $windowBits" }
+/** @param wrap 0 raw, 1 zlib, 2 gzip */
+internal fun deflateInit(strm: ZStream, level: Int, wrap: Int): DeflateState {
+    val lvl = if (level == -1) 6 else level
     require(lvl in 0..9) { "Invalid level: $level" }
-    if (wbits == 8) wbits = 9
-
-    val s = DeflateState(strm, lvl, wbits, memLevel, wrap)
+    val s = DeflateState(strm, lvl, wrap)
     deflateReset(s)
     return s
 }
@@ -182,13 +169,13 @@ private fun slideHash(s: DeflateState) {
     // Branch-free max(m - wsize, 0): the sign mask clears negative results.
     val head = s.head
     for (p in 0 until s.hashSize) {
-        val m = head[p] - wsize
-        head[p] = m and (m shr 31).inv()
+        val m = (head[p].toInt() and 0xffff) - wsize
+        head[p] = (m and (m shr 31).inv()).toShort()
     }
     val prev = s.prev
     for (p in 0 until wsize) {
-        val m = prev[p] - wsize
-        prev[p] = m and (m shr 31).inv()
+        val m = (prev[p].toInt() and 0xffff) - wsize
+        prev[p] = (m and (m shr 31).inv()).toShort()
     }
 }
 
@@ -198,8 +185,8 @@ private fun insertString(s: DeflateState, str: Int): Int {
     val h = ((value * 66521 + 66521) ushr 16) and s.hashMask
     val hashHead = s.head[h]
     s.prev[str and s.wMask] = hashHead
-    s.head[h] = str
-    return hashHead
+    s.head[h] = str.toShort()
+    return hashHead.toInt() and 0xffff
 }
 
 private fun flushPending(strm: ZStream, s: DeflateState) {
@@ -291,7 +278,7 @@ private fun longestMatch(s: DeflateState, startMatch: Int): Int {
             scanEnd1 = win[scan + bestLen - 1]
             scanEnd = win[scan + bestLen]
         }
-    } while (prev[curMatch and wmask].also { curMatch = it } > limit && --chainLength != 0)
+    } while ((prev[curMatch and wmask].toInt() and 0xffff).also { curMatch = it } > limit && --chainLength != 0)
 
     return if (bestLen <= s.lookahead) bestLen else s.lookahead
 }

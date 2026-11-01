@@ -2,18 +2,12 @@ package no.synth.kmpzip.zip
 
 import no.synth.kmpzlib.Inflater
 import no.synth.kmpzlib.ZlibDataException
-import no.synth.kmpzlib.ZlibFormat
 
 internal actual class PlatformInflater actual constructor() {
     private var inflater: Inflater? = null
 
     actual fun init(nowrap: Boolean, gzip: Boolean) {
-        val format = when {
-            gzip -> ZlibFormat.GZIP
-            nowrap -> ZlibFormat.RAW
-            else -> ZlibFormat.ZLIB
-        }
-        inflater = Inflater(format)
+        inflater = Inflater(zlibFormat(nowrap, gzip))
     }
 
     actual fun reset() {

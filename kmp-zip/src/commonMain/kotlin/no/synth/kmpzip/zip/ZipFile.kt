@@ -112,28 +112,22 @@ class ZipFile @JvmOverloads constructor(
         val sourceSize = source.size
         val eocd = findEndOfCentralDirectory(sourceSize)
 
-        // EOCD fixed fields: this-disk @4, cd-start-disk @6, total-records @10,
-        // cd-size @12, cd-offset @16, comment-length @20.
-        var diskNumber = readLeShort(eocd.bytes, eocd.offset + 4).toLong()
-        var cdStartDisk = readLeShort(eocd.bytes, eocd.offset + 6).toLong()
-        var totalEntries = readLeShort(eocd.bytes, eocd.offset + 10).toLong()
-        var cdSize = readLeUInt(eocd.bytes, eocd.offset + 12)
-        var cdOffset = readLeUInt(eocd.bytes, eocd.offset + 16)
+        val plain = parseEndOfCentralDirectory(eocd.bytes, eocd.offset)
 
         // Only a marked size or offset needs ZIP64. Without one, a locator signature may be
         // stray bytes, such as the end of the last entry's comment.
-        val zip64Required = cdOffset == ZipConstants.ZIP64_MAGIC || cdSize == ZipConstants.ZIP64_MAGIC
+        val zip64Required = plain.cdOffset == ZipConstants.ZIP64_MAGIC || plain.cdSize == ZipConstants.ZIP64_MAGIC
         val zip64 = readZip64EndOfCentralDirectory(eocd.position, zip64Required)
-        if (zip64 != null) {
-            diskNumber = zip64.diskNumber
-            cdStartDisk = zip64.cdStartDisk
-            totalEntries = zip64.totalEntries
-            cdSize = zip64.cdSize
-            cdOffset = zip64.cdOffset
-        } else if (cdOffset == ZipConstants.ZIP64_MAGIC || cdSize == ZipConstants.ZIP64_MAGIC) {
+        if (zip64 == null && zip64Required) {
             // A 0xFFFF entry count alone can be literal (exactly 65535 entries).
             throw ZipFormatException("ZIP64 end-of-central-directory locator not found")
         }
+        val end = zip64 ?: plain
+        val diskNumber = end.diskNumber
+        val cdStartDisk = end.cdStartDisk
+        val totalEntries = end.totalEntries
+        val cdSize = end.cdSize
+        val cdOffset = end.cdOffset
         if (diskNumber != 0L || cdStartDisk != 0L) {
             throw ZipUnsupportedFeatureException("Split/spanned ZIP archives are not supported")
         }
@@ -172,21 +166,13 @@ class ZipFile @JvmOverloads constructor(
 
     private class Eocd(val bytes: ByteArray, val offset: Int, val position: Long)
 
-    private class Zip64Eocd(
-        val diskNumber: Long,
-        val cdStartDisk: Long,
-        val totalEntries: Long,
-        val cdSize: Long,
-        val cdOffset: Long,
-    )
-
     /**
      * Reads the ZIP64 end-of-central-directory record through the locator that sits
      * immediately before the EOCD at [eocdPosition]. Returns null when there is none, or
      * when the locator or record is invalid and the EOCD does not [require] ZIP64.
      */
-    private fun readZip64EndOfCentralDirectory(eocdPosition: Long, require: Boolean): Zip64Eocd? {
-        fun invalid(e: ZipException): Zip64Eocd? = if (require) throw e else null
+    private fun readZip64EndOfCentralDirectory(eocdPosition: Long, require: Boolean): EndOfCentralDirectory? {
+        fun invalid(e: ZipException): EndOfCentralDirectory? = if (require) throw e else null
 
         val locatorPosition = eocdPosition - ZIP64_LOCATOR_LEN
         if (locatorPosition < 0) return null
@@ -206,19 +192,11 @@ class ZipFile @JvmOverloads constructor(
         if (readLeUInt(record, 0) != ZIP64_EOCD_SIG) {
             return invalid(ZipFormatException("ZIP64 end-of-central-directory record not found"))
         }
-        val values = longArrayOf(
-            readLeLong(record, 32), // total entries
-            readLeLong(record, 40), // central directory size
-            readLeLong(record, 48), // central directory offset
-        )
-        if (values.any { it < 0 }) return invalid(ZipFormatException("ZIP64 end-of-central-directory value out of range"))
-        return Zip64Eocd(
-            diskNumber = readLeUInt(record, 16),
-            cdStartDisk = readLeUInt(record, 20),
-            totalEntries = values[0],
-            cdSize = values[1],
-            cdOffset = values[2],
-        )
+        val end = parseZip64EndOfCentralDirectory(record, 0)
+        if (end.totalEntries < 0 || end.cdSize < 0 || end.cdOffset < 0) {
+            return invalid(ZipFormatException("ZIP64 end-of-central-directory value out of range"))
+        }
+        return end
     }
 
     private fun findEndOfCentralDirectory(sourceSize: Long): Eocd {
@@ -266,15 +244,6 @@ class ZipFile @JvmOverloads constructor(
         val END_OF_CENTRAL_DIR_SIG = ZipConstants.END_OF_CENTRAL_DIR_SIGNATURE.toLong()
         val ZIP64_EOCD_SIG = ZipConstants.ZIP64_END_OF_CENTRAL_DIR_SIGNATURE.toLong()
         val ZIP64_LOCATOR_SIG = ZipConstants.ZIP64_END_OF_CENTRAL_DIR_LOCATOR_SIGNATURE.toLong()
-
-        /** Fixed-size portion of an end-of-central-directory record (before comment). */
-        const val EOCD_MIN_LEN = 22
-
-        /** ZIP64 end-of-central-directory locator. */
-        const val ZIP64_LOCATOR_LEN = 20
-
-        /** Fixed-size portion of a ZIP64 end-of-central-directory record. */
-        const val ZIP64_EOCD_MIN_LEN = 56
     }
 }
 

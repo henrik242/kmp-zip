@@ -6,24 +6,32 @@ follows semantic versioning; the pre-1.0 series broke API where noted.
 
 ## Unreleased
 
+### Behavior changes
+- `ZipInputStream.nextEntry` throws `ZipFormatException` when the input ends after an
+  entry, or an entry is followed by an unknown `PK` signature, instead of returning
+  `null`. `java.util.zip.ZipInputStream` returns `null` in both cases. Code that reads
+  truncated archives (partial downloads, length-limited streams) and relied on `null`
+  must now catch `ZipFormatException`. An APK Signing Block, or other data without a
+  `PK` signature, still ends the entries. (#49)
+
 ### Added
 - `no.synth:kmp-zlib`, a pure-Kotlin port of pako's zlib (raw DEFLATE, zlib and gzip
-  streams) for every target. MIT and Zlib licenses.
+  streams) for every target, with `Deflater`, `Inflater` and `Crc32`. Its output is the
+  same as pako's. MIT and Zlib licenses.
 - `ZipInputStream(..., verifyCentralDirectory = true)` reads the central directory when
   the entries end and checks it against them: count, names, offsets, CRC-32 and sizes.
+  It is also available with a `String` password.
 
 ### Changed
 - js and wasmJs deflate/inflate with kmp-zlib instead of the pako npm package, so
-  kmp-zip no longer has npm dependencies. Compressed output is the same as pako's.
-- kmp-zlib is faster: CRC-32 about 2x on JVM and js, long and repetitive matches
-  inflate up to 2x faster on JVM and wasmJs, and deflate is slightly faster.
-  Compressed output is unchanged.
+  kmp-zip no longer has npm dependencies. Compressed output is the same as pako's. ZIP
+  CRC-32 on js and wasmJs uses kmp-zlib's slicing-by-4 CRC-32 instead of a byte-at-a-time
+  loop.
+- `ZipOutputStream` reuses one deflater across entries at the same level instead of
+  allocating one per entry.
+- `ZipInputStream` parse errors name the offset where they occurred.
 
 ### Fixed
-- `ZipInputStream.nextEntry` throws `ZipFormatException` when the input ends after an
-  entry instead of returning `null`, and when an entry is followed by an unknown `PK`
-  signature. An APK Signing Block, or other data without a `PK` signature, still ends
-  the entries. (#49)
 - `ZipInputStream` reads a data descriptor without a signature when the entry's CRC-32
   equals the signature value, instead of failing with a size mismatch. (#50)
 

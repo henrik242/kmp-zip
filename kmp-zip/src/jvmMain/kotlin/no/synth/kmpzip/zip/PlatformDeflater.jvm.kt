@@ -36,6 +36,12 @@ internal actual class PlatformDeflater actual constructor() {
         return DeflateResult(consumed, produced, def.finished())
     }
 
+    actual fun reset() {
+        val def = jvmDeflater ?: throw IllegalStateException("Deflater not initialized")
+        def.reset()
+        finishCalled = false
+    }
+
     actual fun end() {
         jvmDeflater?.end()
         jvmDeflater = null

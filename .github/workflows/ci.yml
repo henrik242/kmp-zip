@@ -26,11 +26,11 @@ jobs:
             cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableMacosArm64 :kmp-zip-cli:linkReleaseExecutableMacosX64"
             primary: true
           - os: ubuntu-latest
-            tasks: ":kmp-zip:jvmTest :kmp-zip:linuxX64Test :kmp-zip-okio:linuxX64Test :kmp-zip-kotlinx:linuxX64Test :kmp-zip-cli:jvmTest :kmp-zip-cli:linuxX64Test"
+            tasks: ":kmp-zlib:linuxX64Test :kmp-zip:jvmTest :kmp-zip:linuxX64Test :kmp-zip-okio:linuxX64Test :kmp-zip-kotlinx:linuxX64Test :kmp-zip-cli:jvmTest :kmp-zip-cli:linuxX64Test"
             cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableLinuxX64 :kmp-zip-cli:linkReleaseExecutableLinuxArm64"
             primary: false
           - os: windows-latest
-            tasks: ":kmp-zip:jvmTest :kmp-zip:mingwX64Test :kmp-zip-okio:mingwX64Test :kmp-zip-kotlinx:mingwX64Test :kmp-zip-cli:jvmTest :kmp-zip-cli:mingwX64Test"
+            tasks: ":kmp-zlib:mingwX64Test :kmp-zip:jvmTest :kmp-zip:mingwX64Test :kmp-zip-okio:mingwX64Test :kmp-zip-kotlinx:mingwX64Test :kmp-zip-cli:jvmTest :kmp-zip-cli:mingwX64Test"
             cli-link-tasks: ":kmp-zip-cli:linkReleaseExecutableMingwX64"
             primary: false
     runs-on: ${{ matrix.os }}

@@ -338,11 +338,11 @@ private fun inflateFast(state: InflateState, start: Int) {
                                 // whole periods byte by byte until [from, out) spans at
                                 // least BULK_COPY_MIN bytes, then copy that span forward
                                 // in doubling chunks; it stays a whole number of periods.
-                                val start = from
+                                val periodStart = from
                                 var m = (BULK_COPY_MIN - 1) / dist * dist
                                 len -= m
                                 while (m-- != 0) output[out++] = output[from++]
-                                from = start
+                                from = periodStart
                                 while (len != 0) {
                                     val n = if (out - from < len) out - from else len
                                     output.copyInto(output, out, from, from + n)
