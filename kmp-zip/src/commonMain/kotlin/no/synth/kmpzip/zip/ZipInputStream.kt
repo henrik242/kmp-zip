@@ -900,10 +900,18 @@ class ZipInputStream @JvmOverloads constructor(
     // otherwise trust the local header.
     private fun readDataDescriptor() {
         val possibleSig = readLeInt()
-        val crc = if (possibleSig == ZipConstants.DATA_DESCRIPTOR_SIGNATURE) {
+        val sigAsCrc = possibleSig.toLong() and 0xFFFFFFFFL
+        val crc = if (possibleSig != ZipConstants.DATA_DESCRIPTOR_SIGNATURE) {
+            sigAsCrc
+        } else if (entrySkipCrc || entryCrc?.value() != sigAsCrc) {
             readLeInt().toLong() and 0xFFFFFFFFL
         } else {
-            possibleSig.toLong() and 0xFFFFFFFFL
+            // The signature is optional and this entry's CRC equals it, so the bytes
+            // read may be the CRC. They were the signature only if the CRC follows;
+            // otherwise the next bytes are the sizes.
+            val next = readExact(4)
+            if (readLeUInt(next, 0) != sigAsCrc) unread(next)
+            sigAsCrc
         }
         val first = readExact(8)
         var compressedSize = readLeUInt(first, 0)

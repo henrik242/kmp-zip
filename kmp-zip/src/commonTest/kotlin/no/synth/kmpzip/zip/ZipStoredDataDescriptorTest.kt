@@ -131,6 +131,29 @@ class ZipStoredDataDescriptorTest {
         }
     }
 
+    // Content whose CRC-32 is 0x08074b50, the descriptor signature (#50).
+    private val crcIsSignature = "hello issue 50, payload ".encodeToByteArray() +
+        byteArrayOf(0xb5.toByte(), 0x0e, 0x80.toByte(), 0xa4.toByte())
+
+    @Test
+    fun crcEqualToSignatureWithoutSignature() {
+        assertEquals(ZipConstants.DATA_DESCRIPTOR_SIGNATURE.toLong(), Crypto.crc32(crcIsSignature))
+        val expected = listOf("stored.txt" to crcIsSignature.decodeToString())
+        for (signature in listOf(true, false)) {
+            val data = withDataDescriptor(storedZip(content = crcIsSignature), zeroSizes = false, signature = signature)
+            assertEquals(expected, readAll(data), "signature=$signature")
+            val legacy = withDataDescriptor(
+                storedZip("pw", content = crcIsSignature), zeroSizes = true, zeroCrc = false, signature = signature,
+            )
+            assertEquals(expected, readAll(legacy, "pw"), "legacy, signature=$signature")
+            for ((zip, pw) in listOf(data to null, legacy to "pw".encodeToByteArray())) {
+                ZipInputStream(zip, pw, verifyCentralDirectory = true).use { zis ->
+                    while (zis.nextEntry != null) zis.readBytes()
+                }
+            }
+        }
+    }
+
     @Test
     fun descriptorContradictingTheDataRejected() {
         val data = withDataDescriptor(storedZip(), zeroSizes = false)
