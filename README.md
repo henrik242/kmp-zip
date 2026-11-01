@@ -13,7 +13,7 @@ All ZIP, GZIP, and crypto logic is implemented in common Kotlin. Platform-specif
 | Artifact | Description |
 |----------|-------------|
 | `no.synth:kmp-zip` | Core I/O, ZIP, and GZIP streams |
-| `no.synth:kmp-zlib` | Pure-Kotlin zlib (raw DEFLATE, zlib, gzip) ported from pako. kmp-zip uses it on js and wasmJs only. It builds for JVM (also usable from Android) and every native target too, but there the platform zlib is faster. One `Deflater`/`Inflater` per stream; they are not thread-safe. MIT and Zlib licenses. |
+| `no.synth:kmp-zlib` | Pure-Kotlin zlib (raw DEFLATE, zlib, gzip) ported from pako, for every target. kmp-zip uses it on js and wasmJs; on JVM and native it uses the faster platform zlib. MIT and Zlib licenses. See [kmp-zlib](#kmp-zlib-deflater-and-inflater). |
 | `no.synth:kmp-zip-kotlinx` | [kotlinx-io](https://github.com/Kotlin/kotlinx-io) `Source`/`Sink` adapters (both directions) for the core streams |
 | `no.synth:kmp-zip-okio` | [OkIO](https://square.github.io/okio/) `BufferedSource`/`BufferedSink`/`Source`/`Sink` adapters (both directions) for the core streams |
 | `kmp-zip-cli` | Command-line tool for ZIP/GZIP operations — ships as standalone native binaries on macOS / Linux / Windows, with a JVM fallback. Not published to Maven Central. |
@@ -45,7 +45,7 @@ That builds the bundle, starts a webpack dev server on `http://localhost:8080`, 
 
 ### Runtime caveats:
 
-- **No npm dependencies.** Deflate/inflate comes from `kmp-zlib`, a pure-Kotlin port of pako, pulled in as an ordinary Maven dependency. If you upgraded from a version that used pako, `./gradlew kotlinUpgradeYarnLock` drops it from your `yarn.lock`.
+- **No npm dependencies.** Deflate/inflate comes from `kmp-zlib`, an ordinary Maven dependency. After upgrading from 2.0.0, which used pako, `./gradlew kotlinUpgradeYarnLock` drops pako from your `yarn.lock`.
 - **Bundles include MIT- and Zlib-licensed code.** `kmp-zlib` is a port of pako (MIT) and zlib (Zlib license). Its jars carry the notices in `META-INF/LICENSE`, but a js/wasmJs bundle does not; if you ship one, include [`kmp-zlib/LICENSE`](kmp-zlib/LICENSE) with your third-party notices.
 - **`fileSeekableSource` is Node-only, and on `js` it breaks browser bundling.** It binds Node's `node:fs`, which a bundler resolves statically: on `js`, merely referencing `fileSeekableSource` from code reachable in a browser bundle fails the build with `Can't resolve 'node:fs'`. Keep it behind a Node-only entry point, or use `ByteArraySeekableSource` in the browser. Unreachable references are dropped cleanly on both targets.
 - **`Crypto.randomBytes` requires Web Crypto.** Calls `globalThis.crypto.getRandomValues`, which is available in any browser context (HTTPS *or* plain `http://`) and Node 20+. If the runtime doesn't expose Web Crypto — sandboxed JS realms, browsers with Web Crypto disabled by policy — the call throws `IllegalStateException` naming the likely cause.
@@ -87,13 +87,16 @@ kotlin {
     sourceSets {
         commonMain {
             dependencies {
-                implementation("no.synth:kmp-zip:2.0.0")
+                implementation("no.synth:kmp-zip:2.1.0")
 
                 // Optional: kotlinx-io adapters
-                implementation("no.synth:kmp-zip-kotlinx:2.0.0")
+                implementation("no.synth:kmp-zip-kotlinx:2.1.0")
 
                 // Optional: OkIO adapters
-                implementation("no.synth:kmp-zip-okio:2.0.0")
+                implementation("no.synth:kmp-zip-okio:2.1.0")
+
+                // Optional: the zlib codec alone, without kmp-zip
+                implementation("no.synth:kmp-zlib:2.1.0")
             }
         }
     }
@@ -230,7 +233,7 @@ try {
     ZipInputStream(bytes, password).use { /* read entries */ }
 } catch (e: ZipPasswordException) {          // missing/wrong password
 } catch (e: ZipUnsupportedFeatureException) { // split/spanned, unknown method
-} catch (e: ZipFormatException) {            // not a ZIP, corrupt, or truncated
+} catch (e: ZipFormatException) {            // not a ZIP, corrupt, or truncated (also from nextEntry)
 } catch (e: ZipException) {                  // any other archive-level failure
 }
 ```
@@ -410,7 +413,7 @@ For seekable input, `ZipFile` reads the central directory directly.
 
 ### kmp-zlib: Deflater and Inflater
 
-`no.synth:kmp-zlib` can also be used on its own, on every target. `Deflater` and `Inflater` work on byte array slices and report how much they consumed and produced:
+`no.synth:kmp-zlib` also works on its own, on every target. `Deflater` and `Inflater` work on byte array slices and report how much they consumed and produced. Use one instance per stream; they are not thread-safe.
 
 ```kotlin
 import no.synth.kmpzlib.Deflater
@@ -697,7 +700,7 @@ To run the JVM tests on a real JDK 8 (it must already be installed):
 ```sh
 ./gradlew jvmTest -Ptest.jvm=8
 ./gradlew publishToMavenLocal && scripts/check-java8-artifacts.sh
-./gradlew -p scripts/java8-consumer run -PkmpzipVersion=2.0.0
+./gradlew -p scripts/java8-consumer run -PkmpzipVersion=2.1.0
 ```
 
 The kmp-zlib throughput benchmark is skipped unless `-Pkmpzlib.bench` is set. It prints MB/s to stdout and always reruns. Any kmp-zlib test task works, e.g. on js, wasmJs or native:
@@ -714,8 +717,8 @@ The kmp-zlib throughput benchmark is skipped unless `-Pkmpzlib.bench` is set. It
 Tagging a release triggers the GitHub Actions workflow to publish to Maven Central:
 
 ```sh
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.1.0
+git push origin v2.1.0
 ```
 
 ## License

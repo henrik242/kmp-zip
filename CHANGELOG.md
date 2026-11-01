@@ -4,36 +4,34 @@ All notable changes to this project are documented here. Entries were
 reconstructed from the git tag history. Dates are the tag dates. This project
 follows semantic versioning; the pre-1.0 series broke API where noted.
 
-## Unreleased
-
-### Behavior changes
-- `ZipInputStream.nextEntry` throws `ZipFormatException` when the input ends after an
-  entry, or an entry is followed by an unknown `PK` signature, instead of returning
-  `null`. `java.util.zip.ZipInputStream` returns `null` in both cases. Code that reads
-  truncated archives (partial downloads, length-limited streams) and relied on `null`
-  must now catch `ZipFormatException`. An APK Signing Block, or other data without a
-  `PK` signature, still ends the entries. (#49)
+## 2.1.0 - 2026-11-01
 
 ### Added
-- `no.synth:kmp-zlib`, a pure-Kotlin port of pako's zlib (raw DEFLATE, zlib and gzip
-  streams) for every target, with `Deflater`, `Inflater` and `Crc32`. Its output is the
-  same as pako's. MIT and Zlib licenses.
+- `no.synth:kmp-zlib`: a pure-Kotlin port of pako's zlib for every target, with
+  `Deflater`, `Inflater` (raw DEFLATE, zlib and gzip) and `Crc32`. Output matches
+  pako's. MIT and Zlib licenses.
 - `ZipInputStream(..., verifyCentralDirectory = true)` reads the central directory when
-  the entries end and checks it against them: count, names, offsets, CRC-32 and sizes.
-  It is also available with a `String` password.
+  the entries end and checks the count, names, offsets, CRC-32 and sizes against the
+  entries read. Overloads take a `ByteArray` or `String` password.
 
 ### Changed
-- js and wasmJs deflate/inflate with kmp-zlib instead of the pako npm package, so
-  kmp-zip no longer has npm dependencies. Compressed output is the same as pako's. ZIP
-  CRC-32 on js and wasmJs uses kmp-zlib's slicing-by-4 CRC-32 instead of a byte-at-a-time
-  loop.
+- **Behavior change:** `ZipInputStream.nextEntry` throws `ZipFormatException` when the
+  input ends after an entry, or an entry is followed by an unknown `PK` signature,
+  where it used to return `null` as `java.util.zip` does. Code that reads truncated
+  archives (partial downloads, length-limited streams) and relied on `null` must catch
+  `ZipFormatException`. Data without a `PK` signature, such as an APK Signing Block,
+  still ends the entries. (#49)
+- js and wasmJs use kmp-zlib instead of the pako npm package, so kmp-zip has no npm
+  dependencies; run `./gradlew kotlinUpgradeYarnLock` to drop pako from your
+  `yarn.lock`. Compressed output is unchanged. ZIP CRC-32 there uses kmp-zlib's
+  slicing-by-4 implementation instead of a byte-at-a-time loop. (#51)
 - `ZipOutputStream` reuses one deflater across entries at the same level instead of
   allocating one per entry.
-- `ZipInputStream` parse errors name the offset where they occurred.
+- `ZipInputStream` parse errors give the offset where they occurred.
 
 ### Fixed
-- `ZipInputStream` reads a data descriptor without a signature when the entry's CRC-32
-  equals the signature value, instead of failing with a size mismatch. (#50)
+- `ZipInputStream` reads an unsigned data descriptor whose CRC-32 equals the
+  descriptor signature, instead of failing with a size mismatch. (#50)
 
 ## 2.0.0 - 2026-10-28
 
