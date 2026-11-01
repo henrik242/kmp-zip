@@ -460,6 +460,100 @@ class ZipInputStreamTest {
         }
     }
 
+    private fun abcZip(): ByteArray = ByteArrayOutputStream().also { out ->
+        ZipOutputStream(out).use { zip ->
+            for (name in listOf("a", "b", "c")) {
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(name.encodeToByteArray())
+                zip.closeEntry()
+            }
+        }
+    }.toByteArray()
+
+    private fun lastIndexOfSig(bytes: ByteArray, b2: Int, b3: Int): Int =
+        (bytes.size - 4 downTo 0).first {
+            bytes[it] == 0x50.toByte() && bytes[it + 1] == 0x4b.toByte() &&
+                bytes[it + 2] == b2.toByte() && bytes[it + 3] == b3.toByte()
+        }
+
+    private fun entryNames(bytes: ByteArray): List<String> =
+        ZipInputStream(bytes).use { zis -> generateSequence { zis.nextEntry?.name }.toList() }
+
+    @Test
+    fun corruptLocalHeaderSignatureThrows() {
+        val bytes = abcZip()
+        bytes[lastIndexOfSig(bytes, 3, 4) + 2] = 9
+        assertFailsWith<ZipFormatException> { entryNames(bytes) }
+    }
+
+    @Test
+    fun truncatedAtEntryBoundaryThrows() {
+        val bytes = abcZip()
+        val truncated = bytes.copyOf(lastIndexOfSig(bytes, 3, 4))
+        assertFailsWith<ZipFormatException> { entryNames(truncated) }
+    }
+
+    @Test
+    fun nonPkBlockBeforeCentralDirectoryEndsEntries() {
+        // Like an APK Signing Block: no PK signature, starts with its length.
+        val block = ByteArray(32) { 0x11 }
+        assertEquals(listOf("a", "b", "c"), entryNames(insertBeforeCentralDirectory(abcZip(), block)))
+    }
+
+    private fun insertBeforeCentralDirectory(bytes: ByteArray, block: ByteArray): ByteArray {
+        val cd = (0..bytes.size - 4).first {
+            bytes[it] == 0x50.toByte() && bytes[it + 1] == 0x4b.toByte() &&
+                bytes[it + 2] == 1.toByte() && bytes[it + 3] == 2.toByte()
+        }
+        return bytes.copyOf(cd) + block + bytes.copyOfRange(cd, bytes.size)
+    }
+
+    private fun le64(v: Long) = ByteArray(8) { (v ushr (8 * it)).toByte() }
+
+    // One ID-value pair (ID 0x7109871a, the v2 signature scheme) filling the block.
+    private fun apkSigningBlock(size: Long, magic: String = "APK Sig Block 42"): ByteArray {
+        val pairLen = size - 24 - 8
+        val pair = le64(pairLen) + byteArrayOf(0x1a, 0x87.toByte(), 0x09, 0x71) + ByteArray((pairLen - 4).toInt())
+        return le64(size) + pair + le64(size) + magic.encodeToByteArray()
+    }
+
+    @Test
+    fun apkSigningBlockWithPkLengthEndsEntries() {
+        // A length whose low bytes read as "PK" must not be taken for a bad header.
+        val block = apkSigningBlock(0x00034b50)
+        assertEquals(listOf("a", "b", "c"), entryNames(insertBeforeCentralDirectory(abcZip(), block)))
+    }
+
+    @Test
+    fun pkSignatureWithoutApkMagicThrows() {
+        val block = apkSigningBlock(0x00034b50, magic = "APK Sig Block 43")
+        assertFailsWith<ZipFormatException> { entryNames(insertBeforeCentralDirectory(abcZip(), block)) }
+    }
+
+    @Test
+    fun pkSignatureWithOversizedLengthThrowsWithoutSkipping() {
+        // A length over the cap is rejected up front: the error is the bad signature,
+        // not the end of input that skipping to the trailer would hit.
+        val block = le64(0x7FFF4b50) + ByteArray(64)
+        val e = assertFailsWith<ZipFormatException> { entryNames(insertBeforeCentralDirectory(abcZip(), block)) }
+        assertTrue(e.message.orEmpty().startsWith("Bad header signature"), e.message)
+    }
+
+    @Test
+    fun pkSignatureWithBadFirstPairThrowsWithoutSkipping() {
+        val block = le64(0x00034b50) + le64(0x00034b50) + ByteArray(64)
+        val e = assertFailsWith<ZipFormatException> { entryNames(insertBeforeCentralDirectory(abcZip(), block)) }
+        assertTrue(e.message.orEmpty().startsWith("Bad header signature"), e.message)
+    }
+
+    @Test
+    fun nextEntryKeepsReturningNullAfterEnd() {
+        ZipInputStream(abcZip()).use { zis ->
+            repeat(3) { assertNotNull(zis.nextEntry) }
+            repeat(3) { assertNull(zis.nextEntry) }
+        }
+    }
+
     @Test
     fun unsupportedCompressionMethodThrows() {
         // Patch the first local file header's compression method (offset 8) to an
