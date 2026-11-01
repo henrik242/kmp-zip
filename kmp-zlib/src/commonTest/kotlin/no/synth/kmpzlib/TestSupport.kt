@@ -71,13 +71,15 @@ class Sink {
 }
 
 /** Inputs that exercise stored, fixed and dynamic blocks, long matches and window wrap. */
-fun samples(): List<Pair<String, ByteArray>> {
-    val rnd = Random(42)
-    val text = buildString {
+fun samples(): List<Pair<String, ByteArray>> = TestSamples().all
+
+class TestSamples {
+    private val rnd = Random(42)
+    private val textData = buildString {
         val words = listOf("lorem", "ipsum", "dolor", "sit", "amet", "zip", "kotlin", "deflate", "\n")
         while (length < 200_000) append(words[rnd.nextInt(words.size)]).append(' ')
     }.encodeToByteArray()
-    val mixed = ByteArray(300_000).also { a ->
+    private val mixedData = ByteArray(300_000).also { a ->
         var i = 0
         while (i < a.size) {
             val run = rnd.nextInt(1, 600)
@@ -90,13 +92,13 @@ fun samples(): List<Pair<String, ByteArray>> {
             i += run
         }
     }
-    return listOf(
-        "empty" to ByteArray(0),
-        "one byte" to byteArrayOf(7),
-        "short" to "hello hello hello".encodeToByteArray(),
-        "zeros" to ByteArray(150_000),
-        "random" to rnd.nextBytes(100_000),
-        "text" to text,
-        "mixed" to mixed,
-    )
+    val empty = "empty" to ByteArray(0)
+    val oneByte = "one byte" to byteArrayOf(7)
+    val short = "short" to "hello hello hello".encodeToByteArray()
+    val zeros = "zeros" to ByteArray(150_000)
+    val random = "random" to rnd.nextBytes(100_000)
+    val text = "text" to textData
+    val mixed = "mixed" to mixedData
+
+    val all = listOf(empty, oneByte, short, zeros, random, text, mixed)
 }

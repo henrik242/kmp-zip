@@ -7,17 +7,47 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class RoundTripTest {
+    private val roundTripSamples = TestSamples()
+
     @Test
-    fun allLevelsAndFormats() {
-        for ((name, data) in samples()) {
-            for (format in ZlibFormat.entries) {
-                for (level in -1..9) {
-                    val packed = compress(data, level, format)
-                    val (unpacked, consumed) = decompress(packed, format)
-                    assertContentEquals(data, unpacked, "$name $format level $level")
-                    assertEquals(packed.size, consumed, "$name $format level $level consumed")
-                }
+    fun emptyAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.empty)
+
+    @Test
+    fun oneByteAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.oneByte)
+
+    @Test
+    fun shortAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.short)
+
+    @Test
+    fun zerosAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.zeros)
+
+    @Test
+    fun randomAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.random)
+
+    @Test
+    fun textAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.text)
+
+    @Test
+    fun mixedAllLevelsAndFormats() = allLevelsAndFormats(roundTripSamples.mixed)
+
+    private fun allLevelsAndFormats(sample: Pair<String, ByteArray>) {
+        val (name, data) = sample
+        for (format in ZlibFormat.entries) {
+            for (level in -1..9) {
+                val packed = compress(data, level, format)
+                val (unpacked, consumed) = decompress(packed, format)
+                assertContentEquals(data, unpacked, "$name $format level $level")
+                assertEquals(packed.size, consumed, "$name $format level $level consumed")
             }
+        }
+    }
+
+    @Test
+    fun namedSamplesMatchFreshSamples() {
+        val freshSamples = samples()
+        assertEquals(freshSamples.map { it.first }, roundTripSamples.all.map { it.first })
+        for ((fresh, named) in freshSamples.zip(roundTripSamples.all)) {
+            assertContentEquals(fresh.second, named.second, fresh.first)
         }
     }
 
