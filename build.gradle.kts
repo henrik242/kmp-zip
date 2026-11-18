@@ -3,6 +3,7 @@ import org.gradle.api.attributes.java.TargetJvmVersion
 import org.gradle.api.tasks.testing.AbstractTestTask
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
+import org.jetbrains.kotlin.gradle.targets.js.testing.KotlinJsTest
 import org.jetbrains.kotlin.gradle.targets.jvm.KotlinJvmTarget
 
 plugins {
@@ -50,6 +51,11 @@ allprojects {
     // whole suite runs in well under a minute, so this only ever trips on a hang.
     tasks.withType<AbstractTestTask>().configureEach {
         timeout.set(Duration.ofMinutes(10))
+    }
+
+    // Mocha's default 2 s per test is too tight for the slow macOS runner.
+    tasks.withType<KotlinJsTest>().matching { it.name.endsWith("NodeTest") }.configureEach {
+        useMocha { timeout = "30s" }
     }
 
     tasks.withType<com.github.benmanes.gradle.versions.updates.DependencyUpdatesTask>().configureEach {
