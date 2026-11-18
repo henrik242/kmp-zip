@@ -70,28 +70,46 @@ class SampleFixtureTest {
         }
     }
 
-    @Test
-    fun encryptedFixturesDecryptWithCorrectPassword() {
-        for ((name, pair) in PASSWORD_FIXTURES) {
-            val (bytes, password) = pair
-            val listing = listZipEntries(bytes.toUint8Array(), password)
-            val rows = listing.lines().drop(1).filter { it.isNotBlank() }
-            assertTrue(rows.isNotEmpty(), "$name yielded no entries with correct password")
+    // One test per fixture: key derivation is slow in JS, and looping over all
+    // of them in one test exceeded Mocha's 2s timeout on CI.
+    private fun decryptsWithCorrectPassword(name: String) {
+        val (bytes, password) = PASSWORD_FIXTURES.toMap().getValue(name)
+        val listing = listZipEntries(bytes.toUint8Array(), password)
+        val rows = listing.lines().drop(1).filter { it.isNotBlank() }
+        assertTrue(rows.isNotEmpty(), "$name yielded no entries with correct password")
+    }
+
+    // Wrong-password failure mode varies between AES (HMAC mismatch) and
+    // legacy (decryption succeeds but the deflate stream is garbage). Both
+    // surface as ZipPasswordException at the sample boundary.
+    private fun rejectsWrongPassword(name: String) {
+        val (bytes, _) = PASSWORD_FIXTURES.toMap().getValue(name)
+        assertFailsWith<ZipPasswordException>("$name should reject the wrong password") {
+            listZipEntries(bytes.toUint8Array(), password = "this-is-not-the-password")
         }
     }
 
-    @Test
-    fun encryptedFixturesRejectWrongPassword() {
-        // Wrong-password failure mode varies between AES (HMAC mismatch) and
-        // legacy (decryption succeeds but the deflate stream is garbage). Both
-        // surface as ZipPasswordException at the sample boundary.
-        for ((name, pair) in PASSWORD_FIXTURES) {
-            val (bytes, _) = pair
-            assertFailsWith<ZipPasswordException>("$name should reject the wrong password") {
-                listZipEntries(bytes.toUint8Array(), password = "this-is-not-the-password")
-            }
-        }
-    }
+    @Test fun decryptsAes128Deflated() = decryptsWithCorrectPassword("aes128-deflated.zip")
+    @Test fun decryptsAes256Binary() = decryptsWithCorrectPassword("aes256-binary.zip")
+    @Test fun decryptsAes256Deflated() = decryptsWithCorrectPassword("aes256-deflated.zip")
+    @Test fun decryptsAes256Multi() = decryptsWithCorrectPassword("aes256-multi.zip")
+    @Test fun decryptsAes256Stored() = decryptsWithCorrectPassword("aes256-stored.zip")
+    @Test fun decryptsZip4jAes256Deflated() = decryptsWithCorrectPassword("zip4j-aes256-deflated.zip")
+    @Test fun decryptsLegacyStored() = decryptsWithCorrectPassword("legacy-stored.zip")
+    @Test fun decryptsLegacyDeflated() = decryptsWithCorrectPassword("legacy-deflated.zip")
+    @Test fun decryptsLegacyBinary() = decryptsWithCorrectPassword("legacy-binary.zip")
+    @Test fun decryptsLegacyMulti() = decryptsWithCorrectPassword("legacy-multi.zip")
+
+    @Test fun rejectsWrongPasswordAes128Deflated() = rejectsWrongPassword("aes128-deflated.zip")
+    @Test fun rejectsWrongPasswordAes256Binary() = rejectsWrongPassword("aes256-binary.zip")
+    @Test fun rejectsWrongPasswordAes256Deflated() = rejectsWrongPassword("aes256-deflated.zip")
+    @Test fun rejectsWrongPasswordAes256Multi() = rejectsWrongPassword("aes256-multi.zip")
+    @Test fun rejectsWrongPasswordAes256Stored() = rejectsWrongPassword("aes256-stored.zip")
+    @Test fun rejectsWrongPasswordZip4jAes256Deflated() = rejectsWrongPassword("zip4j-aes256-deflated.zip")
+    @Test fun rejectsWrongPasswordLegacyStored() = rejectsWrongPassword("legacy-stored.zip")
+    @Test fun rejectsWrongPasswordLegacyDeflated() = rejectsWrongPassword("legacy-deflated.zip")
+    @Test fun rejectsWrongPasswordLegacyBinary() = rejectsWrongPassword("legacy-binary.zip")
+    @Test fun rejectsWrongPasswordLegacyMulti() = rejectsWrongPassword("legacy-multi.zip")
 
     @Test
     fun byteArrayMarshallingRoundTrips() {
